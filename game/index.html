@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Orbit Duel</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #05060a;
+    color: #e8ecf4;
+    font-family: 'Courier New', Courier, monospace;
+    overflow: hidden;
+    height: 100%;
+  }
+  #wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+  }
+  canvas {
+    background: #05060a;
+    border: 1px solid #2a3040;
+    box-shadow: 0 0 40px rgba(80, 120, 255, 0.15);
+  }
+  #hint {
+    margin-top: 8px;
+    font-size: 12px;
+    color: #8b93a7;
+    text-align: center;
+    max-width: 900px;
+  }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="game" width="900" height="600"></canvas>
+  <div id="hint">
+    Player 1: A/D rotate, W thrust, Space fire &nbsp;|&nbsp;
+    Player 2: Left/Right rotate, Up thrust, Enter fire &nbsp;|&nbsp;
+    R to restart after a win. First to 5 kills wins. Watch the star's gravity — it bends ships and bullets alike.
+  </div>
+</div>
+<script>
+(function () {
+  'use strict';
+
+  // ---------- Tunable constants ----------
+  const G = 22000;
+  const STAR_MASS = 1;
+  const STAR_RADIUS = 18;
+  const GRAV_MIN_R = 40;          // clamp to avoid singularity blow-up near the star
+  const SHIP_RADIUS = 10;
+  const SHIP_THRUST = 260;
+  const SHIP_ROT_SPEED = 3.6;     // radians / sec
+  const SHIP_DRAG = 0.15;         // linear damping factor per second
+  const BULLET_SPEED = 340;
+  const BULLET_TTL = 3.2;         // seconds
+  const FIRE_COOLDOWN = 0.28;     // seconds
+  const WIN_SCORE = 5;
+  const RESPAWN_DELAY = 1.0;      // seconds
+
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  const CENTER = { x: W / 2, y: H / 2 };
+
+  // ---------- Vector helpers ----------
+  const v = {
+    add: (a, b) => ({ x: a.x + b.x, y: a.y + b.y }),
+    sub: (a, b) => ({ x: a.x - b.x, y: a.y - b.y }),
+    scale: (a, s) => ({ x: a.x * s, y: a.y * s }),
+    len: (a) => Math.hypot(a.x, a.y),
+    norm: (a) => {
+      const l = Math.hypot(a.x, a.y) || 1;
+      return { x: a.x / l, y: a.y / l };
+    }
+  };
+
+  // ---------- Starfield (static, seeded) ----------
+  function seededRandom(seed) {
+    let s = seed;
+    return function () {
+      s = (s * 9301 + 49297) % 233280;
+      return s / 233280;
+    };
+  }
+  const rand = seededRandom(1337);
+  const stars = [];
+  for (let i = 0; i < 140; i++) {
+    stars.push({
+      x: rand() * W,
+      y: rand() * H,
+      r: rand() * 1.4 + 0.3,
+      a: rand() * 0.6 + 0.3
+    });
+  }
+
+  // ---------- Entities ----------
+  function makeShip(id, color, spawn, angle, keys) {
+    return {
+      id, color, keys,
+      pos: { ...spawn },
+      vel: { x: 0, y: 0 },
+      angle,
+      alive: true,
+      respawnAt: 0,
+      cooldown: 0,
+      thrusting: false,
+      score: 0
+    };
+  }
+
+  const SPAWN_P1 = { x: W * 0.22, y: H * 0.5 };
+  const SPAWN_P2 = { x: W * 0.78, y: H * 0.5 };
+
+  const players = [
+    makeShip('P1', '#4ec9ff', SPAWN_P1, 0, {
+      left: 'KeyA', right: 'KeyD', thrust: 'KeyW', fire: 'Space'
+    }),
+    makeShip('P2', '#ff5d73', SPAWN_P2, Math.PI, {
+      left: 'ArrowLeft', right: 'ArrowRight', thrust: 'ArrowUp', fire: 'Enter'
+    })
+  ];
+
+  let bullets = [];
+  let particles = [];
+  let gameOver = false;
+  let winner = null;
+
+  // ---------- Input ----------
+  const keysDown = new Set();
+  window.addEventListener('keydown', (e) => {
+    keysDown.add(e.code);
+    if (['Space', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.code)) {
+      e.preventDefault();
+    }
+    if (gameOver && e.code === 'KeyR') resetGame();
+  }, { passive: false });
+  window.addEventListener('keyup', (e) => keysDown.delete(e.code));
+
+  function resetGame() {
+    players[0].pos = { ...SPAWN_P1 };
+    players[0].vel = { x: 0, y: 0 };
+    players[0].angle = 0;
+    players[0].alive = true;
+    players[0].score = 0;
+    players[1].pos = { ...SPAWN_P2 };
+    players[1].vel = { x: 0, y: 0 };
+    players[1].angle = Math.PI;
+    players[1].alive = true;
+    players[1].score = 0;
+    bullets = [];
+    particles = [];
+    gameOver = false;
+    winner = null;
+  }
+
+  // ---------- Physics ----------
+  function gravityAccel(pos) {
+    const toStar = v.sub(CENTER, pos);
+    const r = Math.max(v.len(toStar), GRAV_MIN_R);
+    const dir = v.norm(toStar);
+    const mag = (G * STAR_MASS) / (r * r);
+    return v.scale(dir, mag);
+  }
+
+  function wrap(pos) {
+    if (pos.x < 0) pos.x += W;
+    if (pos.x > W) pos.x -= W;
+    if (pos.y < 0) pos.y += H;
+    if (pos.y > H) pos.y -= H;
+  }
+
+  function spawnExplosion(pos, color) {
+    for (let i = 0; i < 18; i++) {
+      const ang = Math.random() * Math.PI * 2;
+      const speed = 40 + Math.random() * 120;
+      particles.push({
+        pos: { ...pos },
+        vel: { x: Math.cos(ang) * speed, y: Math.sin(ang) * speed },
+        life: 0.5 + Math.random() * 0.4,
+        color
+      });
+    }
+  }
+
+  function respawnShip(ship, now) {
+    ship.pos = { ...(ship.id === 'P1' ? SPAWN_P1 : SPAWN_P2) };
+    ship.vel = { x: 0, y: 0 };
+    ship.angle = ship.id === 'P1' ? 0 : Math.PI;
+    ship.alive = true;
+  }
+
+  function step(dt, now) {
+    if (gameOver) return;
+
+    for (const ship of players) {
+      if (!ship.alive) {
+        if (now >= ship.respawnAt) respawnShip(ship, now);
+        continue;
+      }
+
+      const k = ship.keys;
+      if (keysDown.has(k.left)) ship.angle -= SHIP_ROT_SPEED * dt;
+      if (keysDown.has(k.right)) ship.angle += SHIP_ROT_SPEED * dt;
+
+      ship.thrusting = keysDown.has(k.thrust);
+      if (ship.thrusting) {
+        const thrustVec = { x: Math.cos(ship.angle), y: Math.sin(ship.angle) };
+        ship.vel = v.add(ship.vel, v.scale(thrustVec, SHIP_THRUST * dt));
+      }
+
+      // gravity
+      ship.vel = v.add(ship.vel, v.scale(gravityAccel(ship.pos), dt));
+      // drag
+      ship.vel = v.scale(ship.vel, Math.max(0, 1 - SHIP_DRAG * dt));
+      // integrate
+      ship.pos = v.add(ship.pos, v.scale(ship.vel, dt));
+      wrap(ship.pos);
+
+      // star collision
+      if (v.len(v.sub(ship.pos, CENTER)) < STAR_RADIUS + SHIP_RADIUS) {
+        spawnExplosion(ship.pos, ship.color);
+        ship.alive = false;
+        ship.respawnAt = now + RESPAWN_DELAY;
+        continue;
+      }
+
+      // firing
+      ship.cooldown -= dt;
+      if (keysDown.has(k.fire) && ship.cooldown <= 0) {
+        ship.cooldown = FIRE_COOLDOWN;
+        const dir = { x: Math.cos(ship.angle), y: Math.sin(ship.angle) };
+        bullets.push({
+          pos: v.add(ship.pos, v.scale(dir, SHIP_RADIUS + 4)),
+          vel: v.add(ship.vel, v.scale(dir, BULLET_SPEED)),
+          ttl: BULLET_TTL,
+          owner: ship.id,
+          color: ship.color
+        });
+      }
+    }
+
+    // bullets
+    for (const b of bullets) {
+      b.vel = v.add(b.vel, v.scale(gravityAccel(b.pos), dt));
+      b.pos = v.add(b.pos, v.scale(b.vel, dt));
+      wrap(b.pos);
+      b.ttl -= dt;
+
+      if (v.len(v.sub(b.pos, CENTER)) < STAR_RADIUS) {
+        b.ttl = 0; // absorbed by star
+      }
+    }
+
+    // bullet-ship collisions
+    for (const b of bullets) {
+      if (b.ttl <= 0) continue;
+      for (const ship of players) {
+        if (!ship.alive || ship.id === b.owner) continue;
+        if (v.len(v.sub(b.pos, ship.pos)) < SHIP_RADIUS + 2) {
+          b.ttl = 0;
+          spawnExplosion(ship.pos, ship.color);
+          ship.alive = false;
+          ship.respawnAt = now + RESPAWN_DELAY;
+          const shooter = players.find(p => p.id === b.owner);
+          if (shooter) shooter.score += 1;
+          if (shooter && shooter.score >= WIN_SCORE) {
+            gameOver = true;
+            winner = shooter.id;
+          }
+        }
+      }
+    }
+    bullets = bullets.filter(b => b.ttl > 0);
+
+    // particles
+    for (const p of particles) {
+      p.pos = v.add(p.pos, v.scale(p.vel, dt));
+      p.life -= dt;
+    }
+    particles = particles.filter(p => p.life > 0);
+  }
+
+  // ---------- Render ----------
+  function drawStarfield() {
+    ctx.fillStyle = '#05060a';
+    ctx.fillRect(0, 0, W, H);
+    for (const s of stars) {
+      ctx.globalAlpha = s.a;
+      ctx.fillStyle = '#cfe0ff';
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function drawStar() {
+    const grad = ctx.createRadialGradient(CENTER.x, CENTER.y, 0, CENTER.x, CENTER.y, STAR_RADIUS * 4);
+    grad.addColorStop(0, 'rgba(255, 220, 140, 0.9)');
+    grad.addColorStop(0.3, 'rgba(255, 180, 80, 0.35)');
+    grad.addColorStop(1, 'rgba(255, 180, 80, 0)');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(CENTER.x, CENTER.y, STAR_RADIUS * 4, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = '#ffdc8c';
+    ctx.beginPath();
+    ctx.arc(CENTER.x, CENTER.y, STAR_RADIUS, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  function drawShip(ship) {
+    if (!ship.alive) return;
+    ctx.save();
+    ctx.translate(ship.pos.x, ship.pos.y);
+    ctx.rotate(ship.angle);
+
+    if (ship.thrusting) {
+      ctx.fillStyle = 'rgba(255,150,60,0.9)';
+      ctx.beginPath();
+      ctx.moveTo(-SHIP_RADIUS, 0);
+      ctx.lineTo(-SHIP_RADIUS - 10 - Math.random() * 6, 0);
+      ctx.lineTo(-SHIP_RADIUS, 5);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    ctx.fillStyle = ship.color;
+    ctx.beginPath();
+    ctx.moveTo(SHIP_RADIUS, 0);
+    ctx.lineTo(-SHIP_RADIUS * 0.8, SHIP_RADIUS * 0.7);
+    ctx.lineTo(-SHIP_RADIUS * 0.4, 0);
+    ctx.lineTo(-SHIP_RADIUS * 0.8, -SHIP_RADIUS * 0.7);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function drawBullets() {
+    for (const b of bullets) {
+      ctx.fillStyle = b.color;
+      ctx.beginPath();
+      ctx.arc(b.pos.x, b.pos.y, 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  function drawParticles() {
+    for (const p of particles) {
+      ctx.globalAlpha = Math.max(0, p.life);
+      ctx.fillStyle = p.color;
+      ctx.beginPath();
+      ctx.arc(p.pos.x, p.pos.y, 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function drawHUD() {
+    ctx.font = '20px "Courier New", monospace';
+    ctx.fillStyle = players[0].color;
+    ctx.fillText('P1: ' + players[0].score, 20, 30);
+    ctx.fillStyle = players[1].color;
+    ctx.textAlign = 'right';
+    ctx.fillText('P2: ' + players[1].score, W - 20, 30);
+    ctx.textAlign = 'left';
+
+    if (gameOver) {
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.fillRect(0, 0, W, H);
+      ctx.textAlign = 'center';
+      ctx.fillStyle = winner === 'P1' ? players[0].color : players[1].color;
+      ctx.font = '42px "Courier New", monospace';
+      ctx.fillText(winner + ' WINS', W / 2, H / 2 - 10);
+      ctx.fillStyle = '#e8ecf4';
+      ctx.font = '18px "Courier New", monospace';
+      ctx.fillText('Press R to restart', W / 2, H / 2 + 26);
+      ctx.textAlign = 'left';
+    }
+  }
+
+  function render() {
+    drawStarfield();
+    drawStar();
+    drawBullets();
+    drawParticles();
+    for (const ship of players) drawShip(ship);
+    drawHUD();
+  }
+
+  // ---------- Main loop ----------
+  let lastTime = performance.now();
+  function frame(now) {
+    const dt = Math.min((now - lastTime) / 1000, 1 / 30); // clamp to avoid spiral of death
+    lastTime = now;
+    step(dt, now / 1000);
+    render();
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  // Expose minimal hooks for automated smoke testing.
+  // NOTE: `bullets` (and `gameOver`) are reassigned each frame (filter/state machine),
+  // so these must be live getters, not object-literal snapshots of the initial value,
+  // or the exposed reference goes stale after the first frame.
+  window.__orbitDuel = {
+    players,
+    get bullets() { return bullets; },
+    get gameOver() { return gameOver; }
+  };
+})();
+</script>
+</body>
+</html>
