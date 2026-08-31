@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tether Duel</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #05060a;
+    color: #e8ecf4;
+    font-family: 'Courier New', Courier, monospace;
+    overflow: hidden;
+    height: 100%;
+  }
+  #wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+  }
+  canvas {
+    background: #0a0c12;
+    border: 1px solid #2a3040;
+    box-shadow: 0 0 40px rgba(255, 120, 80, 0.12);
+  }
+  #hint {
+    margin-top: 8px;
+    font-size: 12px;
+    color: #8b93a7;
+    text-align: center;
+    max-width: 900px;
+  }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="game" width="900" height="600"></canvas>
+  <div id="hint">
+    Player 1: A/D rotate, W thrust, Space yank &nbsp;|&nbsp;
+    Player 2: Left/Right rotate, Up thrust, Enter yank &nbsp;|&nbsp;
+    R to restart after a win. Stray too far and the tether snaps you back — yank to reel
+    your opponent into a hazard. Lose 3 lives and you're out.
+  </div>
+</div>
+<script>
+(function () {
+  'use strict';
+
+  // ---------- Tunable constants ----------
+  const SHIP_RADIUS = 10;
+  const SHIP_THRUST = 240;
+  const SHIP_ROT_SPEED = 3.6;        // radians / sec
+  const SHIP_DRAG = 0.35;            // linear damping factor per second
+  const TETHER_L_REST = 160;         // no spring force below this distance
+  const TETHER_L_MAX_VISUAL = 420;   // beyond this, tether is drawn taut/red (visual only)
+  const TETHER_K = 6.5;              // spring constant
+  const TETHER_MAX_FORCE = 900;      // clamp so extreme stretch can't blow up velocity
+  const YANK_COOLDOWN = 1.6;         // seconds
+  const YANK_IMPULSE_BASE = 90;      // base velocity impulse applied to the opponent
+  const YANK_IMPULSE_PER_STRETCH = 0.6; // extra impulse per px of stretch beyond L_REST
+  const YANK_RECOIL = 0.35;          // fraction of the yank impulse applied back to yanker (opposite dir)
+  const HAZARD_RADIUS = 22;
+  const LIVES_START = 3;
+  const INVULN_TIME = 1.0;           // seconds of invulnerability + flicker after a hit
+  const WALL_PUSH = 600;             // soft push-back accel near arena edges
+
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+
+  // ---------- Vector helpers ----------
+  const v = {
+    add: (a, b) => ({ x: a.x + b.x, y: a.y + b.y }),
+    sub: (a, b) => ({ x: a.x - b.x, y: a.y - b.y }),
+    scale: (a, s) => ({ x: a.x * s, y: a.y * s }),
+    len: (a) => Math.hypot(a.x, a.y),
+    norm: (a) => {
+      const l = Math.hypot(a.x, a.y) || 1;
+      return { x: a.x / l, y: a.y / l };
+    }
+  };
+
+  // ---------- Static hazards ----------
+  const hazards = [
+    { pos: { x: W * 0.5, y: H * 0.5 } },   // center
+    { pos: { x: W * 0.22, y: H * 0.22 } }, // top-left
+    { pos: { x: W * 0.78, y: H * 0.22 } }, // top-right
+    { pos: { x: W * 0.22, y: H * 0.78 } }, // bottom-left
+    { pos: { x: W * 0.78, y: H * 0.78 } }  // bottom-right
+  ];
+
+  // ---------- Entities ----------
+  const SPAWN_P1 = { x: W * 0.15, y: H * 0.5 };
+  const SPAWN_P2 = { x: W * 0.85, y: H * 0.5 };
+
+  function makeShip(id, color, spawn, angle, keys) {
+    return {
+      id, color, keys,
+      pos: { ...spawn },
+      vel: { x: 0, y: 0 },
+      angle,
+      lives: LIVES_START,
+      invulnUntil: 0,
+      cooldown: 0,
+      thrusting: false
+    };
+  }
+
+  const players = [
+    makeShip('P1', '#4ec9ff', SPAWN_P1, 0, {
+      left: 'KeyA', right: 'KeyD', thrust: 'KeyW', yank: 'Space'
+    }),
+    makeShip('P2', '#ff5d73', SPAWN_P2, Math.PI, {
+      left: 'ArrowLeft', right: 'ArrowRight', thrust: 'ArrowUp', yank: 'Enter'
+    })
+  ];
+
+  let particles = [];
+  let gameOver = false;
+  let winner = null;
+
+  // ---------- Input ----------
+  const keysDown = new Set();
+  window.addEventListener('keydown', (e) => {
+    keysDown.add(e.code);
+    if (['Space', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.code)) {
+      e.preventDefault();
+    }
+    if (gameOver && e.code === 'KeyR') resetGame();
+  }, { passive: false });
+  window.addEventListener('keyup', (e) => keysDown.delete(e.code));
+
+  function resetGame() {
+    players[0].pos = { ...SPAWN_P1 };
+    players[0].vel = { x: 0, y: 0 };
+    players[0].angle = 0;
+    players[0].lives = LIVES_START;
+    players[0].invulnUntil = 0;
+    players[0].cooldown = 0;
+    players[1].pos = { ...SPAWN_P2 };
+    players[1].vel = { x: 0, y: 0 };
+    players[1].angle = Math.PI;
+    players[1].lives = LIVES_START;
+    players[1].invulnUntil = 0;
+    players[1].cooldown = 0;
+    particles = [];
+    gameOver = false;
+    winner = null;
+  }
+
+  function spawnHit(pos, color) {
+    for (let i = 0; i < 16; i++) {
+      const ang = Math.random() * Math.PI * 2;
+      const speed = 30 + Math.random() * 100;
+      particles.push({
+        pos: { ...pos },
+        vel: { x: Math.cos(ang) * speed, y: Math.sin(ang) * speed },
+        life: 0.4 + Math.random() * 0.4,
+        color
+      });
+    }
+  }
+
+  function other(ship) {
+    return players.find(p => p.id !== ship.id);
+  }
+
+  function applyHit(ship, fromPos, now) {
+    if (now < ship.invulnUntil) return; // still invulnerable from last hit
+    ship.lives -= 1;
+    ship.invulnUntil = now + INVULN_TIME;
+    spawnHit(ship.pos, ship.color);
+    // knockback away from the hazard/impact point
+    const away = v.norm(v.sub(ship.pos, fromPos));
+    ship.vel = v.add(ship.vel, v.scale(away, 160));
+    if (ship.lives <= 0 && !gameOver) {
+      gameOver = true;
+      winner = other(ship).id;
+    }
+  }
+
+  // ---------- Physics ----------
+  function clampToArena(ship, dt) {
+    const margin = SHIP_RADIUS + 4;
+    if (ship.pos.x < margin) ship.vel.x += WALL_PUSH * dt;
+    if (ship.pos.x > W - margin) ship.vel.x -= WALL_PUSH * dt;
+    if (ship.pos.y < margin) ship.vel.y += WALL_PUSH * dt;
+    if (ship.pos.y > H - margin) ship.vel.y -= WALL_PUSH * dt;
+    ship.pos.x = Math.max(margin, Math.min(W - margin, ship.pos.x));
+    ship.pos.y = Math.max(margin, Math.min(H - margin, ship.pos.y));
+  }
+
+  function tetherForceOn(ship, opponent) {
+    const delta = v.sub(opponent.pos, ship.pos);
+    const dist = v.len(delta);
+    const stretch = dist - TETHER_L_REST;
+    if (stretch <= 0) return { x: 0, y: 0 };
+    const mag = Math.min(TETHER_K * stretch, TETHER_MAX_FORCE);
+    return v.scale(v.norm(delta), mag);
+  }
+
+  function doYank(ship, opponent, now) {
+    const delta = v.sub(opponent.pos, ship.pos);
+    const dist = v.len(delta);
+    const stretch = Math.max(0, dist - TETHER_L_REST);
+    const impulseMag = YANK_IMPULSE_BASE + stretch * YANK_IMPULSE_PER_STRETCH;
+    const dir = v.norm(delta);
+    opponent.vel = v.add(opponent.vel, v.scale(dir, impulseMag));
+    ship.vel = v.add(ship.vel, v.scale(dir, -impulseMag * YANK_RECOIL));
+    ship.cooldown = YANK_COOLDOWN;
+  }
+
+  function step(dt, now) {
+    if (gameOver) return;
+    const [p1, p2] = players;
+
+    for (const ship of players) {
+      const k = ship.keys;
+      if (keysDown.has(k.left)) ship.angle -= SHIP_ROT_SPEED * dt;
+      if (keysDown.has(k.right)) ship.angle += SHIP_ROT_SPEED * dt;
+
+      ship.thrusting = keysDown.has(k.thrust);
+      if (ship.thrusting) {
+        const thrustVec = { x: Math.cos(ship.angle), y: Math.sin(ship.angle) };
+        ship.vel = v.add(ship.vel, v.scale(thrustVec, SHIP_THRUST * dt));
+      }
+
+      ship.cooldown -= dt;
+      if (keysDown.has(k.yank) && ship.cooldown <= 0) {
+        doYank(ship, other(ship), now);
+      }
+    }
+
+    // tether spring force (symmetric, computed once per pair)
+    const f1 = tetherForceOn(p1, p2);
+    p1.vel = v.add(p1.vel, v.scale(f1, dt));
+    p2.vel = v.add(p2.vel, v.scale(f1, -dt));
+
+    for (const ship of players) {
+      // drag
+      ship.vel = v.scale(ship.vel, Math.max(0, 1 - SHIP_DRAG * dt));
+      // integrate
+      ship.pos = v.add(ship.pos, v.scale(ship.vel, dt));
+      clampToArena(ship, dt);
+
+      // hazard collisions
+      for (const hz of hazards) {
+        if (v.len(v.sub(ship.pos, hz.pos)) < HAZARD_RADIUS + SHIP_RADIUS) {
+          applyHit(ship, hz.pos, now);
+          break;
+        }
+      }
+    }
+
+    for (const p of particles) {
+      p.pos = v.add(p.pos, v.scale(p.vel, dt));
+      p.life -= dt;
+    }
+    particles = particles.filter(p => p.life > 0);
+  }
+
+  // ---------- Render ----------
+  function drawArena() {
+    ctx.fillStyle = '#0a0c12';
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  function drawHazards() {
+    for (const hz of hazards) {
+      ctx.fillStyle = 'rgba(255,80,60,0.85)';
+      ctx.beginPath();
+      const r = HAZARD_RADIUS;
+      ctx.moveTo(hz.pos.x, hz.pos.y - r);
+      ctx.lineTo(hz.pos.x + r, hz.pos.y);
+      ctx.lineTo(hz.pos.x, hz.pos.y + r);
+      ctx.lineTo(hz.pos.x - r, hz.pos.y);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,180,150,0.6)';
+      ctx.stroke();
+    }
+  }
+
+  function drawTether() {
+    const [p1, p2] = players;
+    const dist = v.len(v.sub(p2.pos, p1.pos));
+    const t = Math.max(0, Math.min(1, (dist - TETHER_L_REST) / (TETHER_L_MAX_VISUAL - TETHER_L_REST)));
+    const r = Math.round(80 + t * 175);
+    const g = Math.round(200 - t * 160);
+    ctx.strokeStyle = `rgb(${r}, ${g}, 90)`;
+    ctx.lineWidth = 1.5 + t * 2.5;
+    ctx.beginPath();
+    ctx.moveTo(p1.pos.x, p1.pos.y);
+    ctx.lineTo(p2.pos.x, p2.pos.y);
+    ctx.stroke();
+    ctx.lineWidth = 1;
+  }
+
+  function drawShip(ship, now) {
+    const flicker = now < ship.invulnUntil && Math.floor(now * 12) % 2 === 0;
+    if (flicker) return;
+    ctx.save();
+    ctx.translate(ship.pos.x, ship.pos.y);
+    ctx.rotate(ship.angle);
+
+    if (ship.thrusting) {
+      ctx.fillStyle = 'rgba(255,150,60,0.9)';
+      ctx.beginPath();
+      ctx.moveTo(-SHIP_RADIUS, 0);
+      ctx.lineTo(-SHIP_RADIUS - 10 - Math.random() * 6, 0);
+      ctx.lineTo(-SHIP_RADIUS, 5);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    ctx.fillStyle = ship.color;
+    ctx.beginPath();
+    ctx.moveTo(SHIP_RADIUS, 0);
+    ctx.lineTo(-SHIP_RADIUS * 0.8, SHIP_RADIUS * 0.7);
+    ctx.lineTo(-SHIP_RADIUS * 0.4, 0);
+    ctx.lineTo(-SHIP_RADIUS * 0.8, -SHIP_RADIUS * 0.7);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function drawParticles() {
+    for (const p of particles) {
+      ctx.globalAlpha = Math.max(0, p.life);
+      ctx.fillStyle = p.color;
+      ctx.beginPath();
+      ctx.arc(p.pos.x, p.pos.y, 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function drawLives(x, align, color, lives) {
+    ctx.textAlign = align;
+    ctx.fillStyle = color;
+    ctx.font = '20px "Courier New", monospace';
+    const hearts = '♥'.repeat(Math.max(0, lives)) + '·'.repeat(LIVES_START - Math.max(0, lives));
+    ctx.fillText(hearts, x, 30);
+  }
+
+  function drawHUD(now) {
+    drawLives(20, 'left', players[0].color, players[0].lives);
+    drawLives(W - 20, 'right', players[1].color, players[1].lives);
+    ctx.textAlign = 'left';
+
+    // yank cooldown pips (small, under each score)
+    ctx.font = '12px "Courier New", monospace';
+    ctx.fillStyle = players[0].cooldown > 0 ? '#555c6e' : players[0].color;
+    ctx.fillText(players[0].cooldown > 0 ? 'yank: cooling' : 'yank: ready', 20, 48);
+    ctx.textAlign = 'right';
+    ctx.fillStyle = players[1].cooldown > 0 ? '#555c6e' : players[1].color;
+    ctx.fillText(players[1].cooldown > 0 ? 'yank: cooling' : 'yank: ready', W - 20, 48);
+    ctx.textAlign = 'left';
+
+    if (gameOver) {
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.fillRect(0, 0, W, H);
+      ctx.textAlign = 'center';
+      const winnerShip = players.find(p => p.id === winner);
+      ctx.fillStyle = winnerShip ? winnerShip.color : '#e8ecf4';
+      ctx.font = '42px "Courier New", monospace';
+      ctx.fillText(winner + ' WINS', W / 2, H / 2 - 10);
+      ctx.fillStyle = '#e8ecf4';
+      ctx.font = '18px "Courier New", monospace';
+      ctx.fillText('Press R to restart', W / 2, H / 2 + 26);
+      ctx.textAlign = 'left';
+    }
+  }
+
+  function render(now) {
+    drawArena();
+    drawHazards();
+    drawTether();
+    drawParticles();
+    for (const ship of players) drawShip(ship, now);
+    drawHUD(now);
+  }
+
+  // ---------- Main loop ----------
+  let lastTime = performance.now();
+  function frame(now) {
+    const dt = Math.min((now - lastTime) / 1000, 1 / 30); // clamp to avoid spiral of death
+    lastTime = now;
+    step(dt, now / 1000);
+    render(now / 1000);
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  // Expose minimal hooks for automated smoke/e2e testing.
+  // NOTE (lesson carried over from cycle 1's Orbit Duel): `particles`, `gameOver`, and
+  // `winner` are reassigned each frame/state-change, not mutated in place, so they must
+  // be live getters, not object-literal snapshots of the initial value, or the exposed
+  // reference goes stale.
+  window.__tetherDuel = {
+    players,
+    hazards,
+    get particles() { return particles; },
+    get gameOver() { return gameOver; },
+    get winner() { return winner; },
+    // test-only: force a hazard hit on a given player id, bypassing input, so the
+    // win-condition + restart flow can be exercised deterministically without relying
+    // on scripted precision movement.
+    __testForceHit(playerId) {
+      const ship = players.find(p => p.id === playerId);
+      if (!ship) return;
+      ship.invulnUntil = 0;
+      applyHit(ship, { x: ship.pos.x - 1, y: ship.pos.y }, performance.now() / 1000);
+    },
+    __testReset() { resetGame(); }
+  };
+})();
+</script>
+</body>
+</html>
