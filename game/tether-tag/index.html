@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tether Tag</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #0a0a10;
+    color: #e8ecf4;
+    font-family: 'Courier New', Courier, monospace;
+    overflow: hidden;
+    height: 100%;
+  }
+  #wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+  }
+  canvas {
+    background: #0a0a10;
+    border: 1px solid #2a3040;
+    box-shadow: 0 0 40px rgba(120, 90, 255, 0.15);
+  }
+  #hint {
+    margin-top: 8px;
+    font-size: 12px;
+    color: #8b93a7;
+    text-align: center;
+    max-width: 900px;
+  }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="game" width="800" height="500"></canvas>
+  <div id="hint">
+    Player 1: W/A/S/D move &nbsp;|&nbsp; Player 2: Arrow keys move &nbsp;|&nbsp;
+    R to restart after a win. First to 5 tags wins. The tether holds taut past its max
+    length — swing around the arena and use its pull, don't just run.
+  </div>
+</div>
+<script>
+(function () {
+  'use strict';
+
+  // ---------- Tunable constants ----------
+  const ARENA_W = 800;
+  const ARENA_H = 500;
+  const PLAYER_RADIUS = 14;
+  const ACCEL = 900;              // px / s^2
+  const DRAG = 2.2;               // linear damping factor per second
+  const TETHER_LEN = 220;         // px, slack up to this length
+  const TAG_IMMUNITY = 0.9;       // seconds of immunity after a tag
+  const WIN_SCORE = 5;
+
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+
+  // ---------- Vector helpers ----------
+  const v = {
+    add: (a, b) => ({ x: a.x + b.x, y: a.y + b.y }),
+    sub: (a, b) => ({ x: a.x - b.x, y: a.y - b.y }),
+    scale: (a, s) => ({ x: a.x * s, y: a.y * s }),
+    len: (a) => Math.hypot(a.x, a.y),
+    norm: (a) => {
+      const l = Math.hypot(a.x, a.y) || 1;
+      return { x: a.x / l, y: a.y / l };
+    }
+  };
+
+  // ---------- Entities ----------
+  const SPAWN_P1 = { x: W * 0.35, y: H * 0.5 };
+  const SPAWN_P2 = { x: W * 0.65, y: H * 0.5 };
+
+  function makePlayer(id, color, spawn, keys, it) {
+    return {
+      id, color, keys,
+      pos: { ...spawn },
+      vel: { x: 0, y: 0 },
+      it,
+      immune: 0,
+      score: 0
+    };
+  }
+
+  const players = [
+    makePlayer('P1', '#4ec9ff', SPAWN_P1, { up: 'KeyW', down: 'KeyS', left: 'KeyA', right: 'KeyD' }, true),
+    makePlayer('P2', '#ff5d73', SPAWN_P2, { up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight' }, false)
+  ];
+
+  let particles = [];
+  let gameOver = false;
+  let winner = null;
+
+  // ---------- Input ----------
+  const keysDown = new Set();
+  window.addEventListener('keydown', (e) => {
+    keysDown.add(e.code);
+    if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Space'].includes(e.code)) {
+      e.preventDefault();
+    }
+    if (gameOver && e.code === 'KeyR') resetGame();
+  }, { passive: false });
+  window.addEventListener('keyup', (e) => keysDown.delete(e.code));
+
+  function resetGame() {
+    players[0].pos = { ...SPAWN_P1 };
+    players[0].vel = { x: 0, y: 0 };
+    players[0].it = true;
+    players[0].score = 0;
+    players[0].immune = 0;
+    players[1].pos = { ...SPAWN_P2 };
+    players[1].vel = { x: 0, y: 0 };
+    players[1].it = false;
+    players[1].score = 0;
+    players[1].immune = 0;
+    particles = [];
+    gameOver = false;
+    winner = null;
+  }
+
+  function spawnBurst(pos, color) {
+    for (let i = 0; i < 16; i++) {
+      const ang = Math.random() * Math.PI * 2;
+      const speed = 30 + Math.random() * 100;
+      particles.push({
+        pos: { ...pos },
+        vel: { x: Math.cos(ang) * speed, y: Math.sin(ang) * speed },
+        life: 0.4 + Math.random() * 0.35,
+        color
+      });
+    }
+  }
+
+  // ---------- Physics ----------
+  function step(dt) {
+    if (gameOver) return;
+
+    for (const p of players) {
+      const k = p.keys;
+      let ax = 0, ay = 0;
+      if (keysDown.has(k.left)) ax -= 1;
+      if (keysDown.has(k.right)) ax += 1;
+      if (keysDown.has(k.up)) ay -= 1;
+      if (keysDown.has(k.down)) ay += 1;
+      if (ax !== 0 || ay !== 0) {
+        const dir = v.norm({ x: ax, y: ay });
+        p.vel = v.add(p.vel, v.scale(dir, ACCEL * dt));
+      }
+      // drag
+      p.vel = v.scale(p.vel, Math.max(0, 1 - DRAG * dt));
+      // integrate
+      p.pos = v.add(p.pos, v.scale(p.vel, dt));
+
+      // wall bounce
+      if (p.pos.x - PLAYER_RADIUS < 0) { p.pos.x = PLAYER_RADIUS; p.vel.x = Math.abs(p.vel.x); }
+      if (p.pos.x + PLAYER_RADIUS > W) { p.pos.x = W - PLAYER_RADIUS; p.vel.x = -Math.abs(p.vel.x); }
+      if (p.pos.y - PLAYER_RADIUS < 0) { p.pos.y = PLAYER_RADIUS; p.vel.y = Math.abs(p.vel.y); }
+      if (p.pos.y + PLAYER_RADIUS > H) { p.pos.y = H - PLAYER_RADIUS; p.vel.y = -Math.abs(p.vel.y); }
+
+      if (p.immune > 0) p.immune -= dt;
+    }
+
+    // tether constraint (positional; taut past TETHER_LEN, slack below it)
+    const [a, b] = players;
+    const delta = v.sub(b.pos, a.pos);
+    const dist = v.len(delta);
+    if (dist > TETHER_LEN) {
+      const dir = v.norm(delta);
+      const correction = (dist - TETHER_LEN) / 2;
+      a.pos = v.add(a.pos, v.scale(dir, correction));
+      b.pos = v.sub(b.pos, v.scale(dir, correction));
+
+      // zero out the outward-radial velocity component on each side so the tether
+      // reads as a taut rope rather than a springy snap-back
+      const aOutward = v.scale(dir, -1);
+      const aRadial = a.vel.x * aOutward.x + a.vel.y * aOutward.y;
+      if (aRadial < 0) a.vel = v.sub(a.vel, v.scale(aOutward, aRadial));
+      const bRadial = b.vel.x * dir.x + b.vel.y * dir.y;
+      if (bRadial < 0) b.vel = v.sub(b.vel, v.scale(dir, bRadial));
+    }
+
+    // tag detection: role swaps, and the player who was NOT "it" (and just made
+    // contact, becoming the new chaser) scores the point for the tag.
+    const d = v.len(v.sub(b.pos, a.pos));
+    if (d < PLAYER_RADIUS * 2 && a.immune <= 0 && b.immune <= 0) {
+      const oldChaser = a.it ? a : b;
+      const newChaser = a.it ? b : a;
+      oldChaser.it = false;
+      newChaser.it = true;
+      newChaser.score += 1;
+      a.immune = TAG_IMMUNITY;
+      b.immune = TAG_IMMUNITY;
+      spawnBurst({ x: (a.pos.x + b.pos.x) / 2, y: (a.pos.y + b.pos.y) / 2 }, '#ffd76a');
+
+      if (newChaser.score >= WIN_SCORE) {
+        gameOver = true;
+        winner = newChaser.id;
+      }
+    }
+
+    // particles
+    for (const p of particles) {
+      p.pos = v.add(p.pos, v.scale(p.vel, dt));
+      p.life -= dt;
+    }
+    particles = particles.filter(p => p.life > 0);
+  }
+
+  // ---------- Render ----------
+  function drawArena() {
+    ctx.fillStyle = '#0a0a10';
+    ctx.fillRect(0, 0, W, H);
+    ctx.strokeStyle = '#22283a';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(1, 1, W - 2, H - 2);
+  }
+
+  function drawTether() {
+    const [a, b] = players;
+    const dist = v.len(v.sub(b.pos, a.pos));
+    const taut = dist >= TETHER_LEN - 1;
+    ctx.strokeStyle = taut ? 'rgba(255, 215, 106, 0.9)' : 'rgba(140, 150, 180, 0.5)';
+    ctx.lineWidth = taut ? 3 : 1.5;
+    ctx.beginPath();
+    ctx.moveTo(a.pos.x, a.pos.y);
+    ctx.lineTo(b.pos.x, b.pos.y);
+    ctx.stroke();
+  }
+
+  function drawPlayer(p, now) {
+    ctx.save();
+    if (p.it) {
+      const pulse = 3 + Math.sin(now * 8) * 2;
+      ctx.strokeStyle = '#ffd76a';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(p.pos.x, p.pos.y, PLAYER_RADIUS + pulse, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = p.immune > 0 ? 0.5 : 1;
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.pos.x, p.pos.y, PLAYER_RADIUS, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function drawParticles() {
+    for (const p of particles) {
+      ctx.globalAlpha = Math.max(0, p.life);
+      ctx.fillStyle = p.color;
+      ctx.beginPath();
+      ctx.arc(p.pos.x, p.pos.y, 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function drawHUD() {
+    ctx.font = '20px "Courier New", monospace';
+    ctx.fillStyle = players[0].color;
+    ctx.fillText('P1: ' + players[0].score + (players[0].it ? '  (IT)' : ''), 20, 30);
+    ctx.fillStyle = players[1].color;
+    ctx.textAlign = 'right';
+    ctx.fillText('P2: ' + players[1].score + (players[1].it ? '  (IT)' : ''), W - 20, 30);
+    ctx.textAlign = 'left';
+
+    if (gameOver) {
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.fillRect(0, 0, W, H);
+      ctx.textAlign = 'center';
+      ctx.fillStyle = winner === 'P1' ? players[0].color : players[1].color;
+      ctx.font = '42px "Courier New", monospace';
+      ctx.fillText(winner + ' WINS', W / 2, H / 2 - 10);
+      ctx.fillStyle = '#e8ecf4';
+      ctx.font = '18px "Courier New", monospace';
+      ctx.fillText('Press R to restart', W / 2, H / 2 + 26);
+      ctx.textAlign = 'left';
+    }
+  }
+
+  function render(now) {
+    drawArena();
+    drawTether();
+    drawParticles();
+    for (const p of players) drawPlayer(p, now);
+    drawHUD();
+  }
+
+  // ---------- Main loop ----------
+  let lastTime = performance.now();
+  function frame(now) {
+    const dt = Math.min((now - lastTime) / 1000, 1 / 30); // clamp to avoid spiral of death
+    lastTime = now;
+    step(dt);
+    render(now / 1000);
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  // Expose minimal hooks for automated smoke testing.
+  // NOTE: `particles`/`gameOver` are reassigned each frame, so these must be live
+  // getters, not object-literal snapshots (same lesson learned in Cycle 1's Orbit Duel).
+  window.__tetherTag = {
+    players,
+    TETHER_LEN,
+    get particles() { return particles; },
+    get gameOver() { return gameOver; },
+    get winner() { return winner; },
+    distance() { return v.len(v.sub(players[1].pos, players[0].pos)); }
+  };
+})();
+</script>
+</body>
+</html>
