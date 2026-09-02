@@ -1,11 +1,19 @@
 {
-  "cycle": 1,
-  "cycleStarted": "2026-08-31T12:55:00Z",
-  "lastUpdated": "2026-08-31T13:40:00Z",
+  "cycle": 2,
+  "cycleStarted": "2026-09-02T00:12:00Z",
+  "lastUpdated": "2026-09-02T00:45:00Z",
   "phase": "done",
   "nextPhase": "research",
-  "selectedConcept": "Orbit Duel",
-  "checkpoints": [
+  "selectedConcept": "Echo Maze",
+  "previousCycles": [
+    {
+      "cycle": 1,
+      "phase": "done",
+      "selectedConcept": "Orbit Duel",
+      "outputs": ["docs/concepts.md", "docs/design.md", "game/index.html", "docs/test-results.md"]
+    }
+  ],
+  "cycle1Checkpoints": [
     {
       "phase": "research",
       "completedAt": "2026-08-31T12:58:00Z",
@@ -31,12 +39,43 @@
       "notes": "Automated Playwright/headless-Chromium smoke tests: load+interaction test and ~6s extended-session test, both PASS. Found and fixed one test-hook staleness bug (window.__orbitDuel.bullets snapshot vs live getter) during testing. Win-condition end-to-end and fun/balance tuning are NOT covered by automated tests -- flagged as follow-up."
     }
   ],
+  "checkpoints": [
+    {
+      "phase": "research",
+      "completedAt": "2026-09-02T00:15:00Z",
+      "outputs": ["docs/concepts-cycle2.md"],
+      "notes": "5 new concepts brainstormed and scored (no repeats of Cycle 1 candidates); Echo Maze selected, Pulse Runner as fallback."
+    },
+    {
+      "phase": "design",
+      "completedAt": "2026-09-02T00:20:00Z",
+      "outputs": ["docs/design-cycle2.md"],
+      "notes": "Single-file HTML5 canvas architecture for Echo Maze: fixed hand-authored maze, BFS-based ping/fog system, scripted guard patrol, grid-cell collision for win/lose, tunable constants, testing plan defined."
+    },
+    {
+      "phase": "implementation",
+      "completedAt": "2026-09-02T00:35:00Z",
+      "outputs": ["game/echo-maze.html"],
+      "notes": "Self-contained playable prototype: single-player stealth-navigation game with sound-pulse fog-of-war, scripted guard patrols, and grid-cell win/lose detection. Maze layout, start/exit cells, and guard patrol paths generated once by a seeded offline script (not committed -- a one-off generation aid) and hardcoded into the shipped HTML file for a guaranteed-solvable, deterministic level. No build step, no external assets/deps."
+    },
+    {
+      "phase": "testing",
+      "completedAt": "2026-09-02T00:45:00Z",
+      "outputs": ["docs/test-results-cycle2.md"],
+      "notes": "Automated Playwright/headless-Chromium tests: load+movement+ping/fog+patrol smoke test, directed win-condition test, directed lose-condition test, restart test, and an extended mixed-input stress test -- all 5 PASS, zero errors. Win condition exercised via a test-only teleport hook rather than scripting the full ~40-step solution path with real input; win/lose primitives and real movement/ping/patrol systems are otherwise directly verified. Fun/balance tuning not human-playtested -- flagged as follow-up, consistent with Cycle 1's approach."
+    }
+  ],
   "blockers": [],
-  "followUps": [
+  "cycle1FollowUps": [
     "Human/manual playtest of Orbit Duel for feel/balance tuning (SHIP_THRUST, SHIP_DRAG, G, BULLET_SPEED).",
     "Automated end-to-end test of the win condition + restart flow.",
     "Consider a simple AI opponent or additional modes if this concept is revisited in a future cycle."
   ],
-  "budgetNotes": "Single-session run, no subagent fan-out used to conserve budget. Implementation kept to one self-contained HTML file (no build step) to keep scope tight. Cycle 1 completed fully within budget with no usage-limit warning encountered.",
-  "resumeInstructions": "Cycle 1 is complete (phase: done) with valid outputs at every checkpoint -- do not re-execute cycle 1's research/design/implementation/testing phases. On next invocation, start Cycle 2 at 'research': read docs/concepts.md for prior art (avoid re-proposing Orbit Duel/Gravity Flip Runner/Color Bind/Signal Weaver/Chrono Loop verbatim; a genuine evolution of one is fine) and consider addressing the 'followUps' list above (e.g. iterating on Orbit Duel) as one of the new cycle's candidate concepts."
+  "followUps": [
+    "Human/manual playtest of Echo Maze for feel/balance tuning (PING_DEPTH, PING_COOLDOWN_MS, GUARD_SPEED, COLLISION_DIST).",
+    "Automated end-to-end test that walks the real ~40-step solution path with scripted input (not just the teleport-hook win/lose check).",
+    "Consider additional maze levels, procedural generation, or guards that react to nearby pings if this concept is revisited in a future cycle."
+  ],
+  "budgetNotes": "Cycle 1: single-session run, no subagent fan-out, completed fully within budget. Cycle 2: also single-session, no subagent fan-out; one offline seeded script used to generate the fixed maze/guard-patrol data (not part of the shipped prototype). Completed fully within budget with no usage-limit warning encountered.",
+  "resumeInstructions": "Cycle 2 is complete (phase: done) with valid outputs at every checkpoint -- do not re-execute cycle 2's research/design/implementation/testing phases. On next invocation, start Cycle 3 at 'research': read docs/concepts.md and docs/concepts-cycle2.md for prior art (avoid re-proposing Orbit Duel/Gravity Flip Runner/Color Bind/Signal Weaver/Chrono Loop/Echo Maze/Tide Pool/Rune Duel/Pulse Runner/Ink Bloom verbatim; a genuine evolution of one is fine) and consider addressing the 'followUps' list above (e.g. iterating on Echo Maze, or Cycle 1's Orbit Duel) as one of the new cycle's candidate concepts."
 }

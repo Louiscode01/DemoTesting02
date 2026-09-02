@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Echo Maze</title>
+<style>
+  html, body {
+    margin: 0; height: 100%; background: #05050a; color: #cfd6e6;
+    font-family: 'Segoe UI', Arial, sans-serif;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+  }
+  #info { margin: 10px 0 4px; font-size: 14px; text-align: center; opacity: 0.85; }
+  canvas { background: #000; display: block; border: 1px solid #222; }
+</style>
+</head>
+<body>
+<div id="info">Echo Maze &mdash; Arrows / WASD move &middot; Space = ping &middot; R = restart</div>
+<canvas id="c" width="540" height="436"></canvas>
+<script>
+(function () {
+  'use strict';
+
+  // ---------- Maze data (fixed, hand-selected: seeded recursive-backtracker maze
+  // with a few loops added, guaranteed connected/solvable by construction) ----------
+  const MAZE_ROWS = [
+    '###############',
+    '#S..#.........#',
+    '###.###.#####.#',
+    '#.#...#E#...#.#',
+    '#.###.#.#...#.#',
+    '#.#...#.#.....#',
+    '#.#.###.#.#.#.#',
+    '#.....#...#...#',
+    '#.##..#######.#',
+    '#.............#',
+    '###############'
+  ];
+  const MAZE_W = MAZE_ROWS[0].length;
+  const MAZE_H = MAZE_ROWS.length;
+  const START_CELL = { x: 1, y: 1 };
+  const EXIT_CELL = { x: 7, y: 3 };
+  const GUARD_PATROLS = [
+    [[3,5],[3,6],[3,7],[4,7],[5,7],[5,8],[5,9],[6,9],[7,9]],
+    [[13,9],[13,8],[13,7],[12,7],[11,7],[11,6],[11,5],[10,5],[9,5]]
+  ];
+
+  function isWall(x, y) {
+    if (x < 0 || x >= MAZE_W || y < 0 || y >= MAZE_H) return true;
+    return MAZE_ROWS[y][x] === '#';
+  }
+
+  // ---------- Tunable constants ----------
+  const CELL_SIZE = 36;
+  const HUD_H = 40;
+  const PLAYER_MOVE_MS = 140;
+  const PING_DEPTH = 6;          // BFS depth (in cells) revealed per ping
+  const PING_COOLDOWN_MS = 1400;
+  const PING_FLASH_MS = 1100;
+  const GUARD_SPEED = 1.8;       // cells per second along patrol path
+  const COLLISION_DIST = CELL_SIZE * 0.55;
+
+  // ---------- Canvas ----------
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d');
+
+  // ---------- Helpers ----------
+  function cellPx(cx, cy) {
+    return { x: cx * CELL_SIZE + CELL_SIZE / 2, y: HUD_H + cy * CELL_SIZE + CELL_SIZE / 2 };
+  }
+  function lerp(a, b, t) { return a + (b - a) * t; }
+
+  // ---------- World state ----------
+  let player, guards, remembered, litCells, pingCooldown, phase, lastTime;
+
+  function bfsReveal(sx, sy, depth) {
+    const dist = new Map();
+    const key = (x, y) => x + ',' + y;
+    dist.set(key(sx, sy), 0);
+    const q = [[sx, sy]];
+    let qi = 0;
+    const result = [[sx, sy]];
+    while (qi < q.length) {
+      const [x, y] = q[qi++];
+      const d = dist.get(key(x, y));
+      if (d >= depth) continue;
+      for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+        const nx = x + dx, ny = y + dy;
+        if (isWall(nx, ny)) continue;
+        const k = key(nx, ny);
+        if (dist.has(k)) continue;
+        dist.set(k, d + 1);
+        q.push([nx, ny]);
+        result.push([nx, ny]);
+      }
+    }
+    return result;
+  }
+
+  function makeGuard(patrol) {
+    return {
+      patrol,
+      idx: 0,
+      dir: 1,
+      progress: 0, // 0..1 between patrol[idx] and patrol[idx + dir]
+      cell: { x: patrol[0][0], y: patrol[0][1] },
+      pixel: cellPx(patrol[0][0], patrol[0][1])
+    };
+  }
+
+  function resetGame() {
+    player = {
+      cell: { x: START_CELL.x, y: START_CELL.y },
+      from: { x: START_CELL.x, y: START_CELL.y },
+      to: { x: START_CELL.x, y: START_CELL.y },
+      moveT: 1, // 1 = not moving (at rest on `cell`)
+      pixel: cellPx(START_CELL.x, START_CELL.y)
+    };
+    guards = GUARD_PATROLS.map(makeGuard);
+    remembered = new Set();
+    litCells = new Map(); // key -> expiry timestamp
+    pingCooldown = 0;
+    phase = 'playing';
+    doPing(true); // reveal starting area immediately so the player isn't stuck in total black
+  }
+
+  function cellKey(x, y) { return x + ',' + y; }
+
+  function doPing(silent) {
+    if (!silent) {
+      if (pingCooldown > 0 || phase !== 'playing') return;
+      pingCooldown = PING_COOLDOWN_MS;
+    }
+    const now = performance.now();
+    const revealed = bfsReveal(player.cell.x, player.cell.y, PING_DEPTH);
+    for (const [x, y] of revealed) {
+      const k = cellKey(x, y);
+      remembered.add(k);
+      litCells.set(k, now + PING_FLASH_MS);
+    }
+  }
+
+  // ---------- Input ----------
+  const keys = new Set();
+  window.addEventListener('keydown', (e) => {
+    const k = e.key.toLowerCase();
+    if (['arrowup','arrowdown','arrowleft','arrowright',' ','w','a','s','d','r'].includes(k)) e.preventDefault();
+    if (k === ' ') { doPing(false); return; }
+    if (k === 'r') { if (phase !== 'playing') resetGame(); return; }
+    keys.add(k);
+  });
+  window.addEventListener('keyup', (e) => keys.delete(e.key.toLowerCase()));
+
+  function wantedDir() {
+    if (keys.has('arrowup') || keys.has('w')) return { dx: 0, dy: -1 };
+    if (keys.has('arrowdown') || keys.has('s')) return { dx: 0, dy: 1 };
+    if (keys.has('arrowleft') || keys.has('a')) return { dx: -1, dy: 0 };
+    if (keys.has('arrowright') || keys.has('d')) return { dx: 1, dy: 0 };
+    return null;
+  }
+
+  // ---------- Update ----------
+  function update(dt) {
+    if (pingCooldown > 0) pingCooldown = Math.max(0, pingCooldown - dt);
+
+    if (phase !== 'playing') return;
+
+    // Player movement (grid-stepped, animated between cells)
+    if (player.moveT >= 1) {
+      const d = wantedDir();
+      if (d) {
+        const nx = player.cell.x + d.dx, ny = player.cell.y + d.dy;
+        if (!isWall(nx, ny)) {
+          player.from = { x: player.cell.x, y: player.cell.y };
+          player.to = { x: nx, y: ny };
+          player.moveT = 0;
+        }
+      }
+    } else {
+      player.moveT = Math.min(1, player.moveT + dt / PLAYER_MOVE_MS);
+      if (player.moveT >= 1) {
+        player.cell = { x: player.to.x, y: player.to.y };
+      }
+    }
+    const fromPx = cellPx(player.from.x, player.from.y);
+    const toPx = cellPx(player.to.x, player.to.y);
+    player.pixel = {
+      x: lerp(fromPx.x, toPx.x, player.moveT),
+      y: lerp(fromPx.y, toPx.y, player.moveT)
+    };
+
+    // Guard patrol movement (ping-pong along waypoint list)
+    for (const g of guards) {
+      const path = g.patrol;
+      if (path.length > 1) {
+        const cellsPerMs = GUARD_SPEED / 1000;
+        g.progress += cellsPerMs * dt;
+        while (g.progress >= 1) {
+          g.progress -= 1;
+          g.idx += g.dir;
+          if (g.idx >= path.length - 1) { g.idx = path.length - 1; g.dir = -1; }
+          else if (g.idx <= 0) { g.idx = 0; g.dir = 1; }
+        }
+        const a = path[g.idx];
+        const b = path[Math.min(path.length - 1, Math.max(0, g.idx + g.dir))];
+        g.cell = { x: Math.round(lerp(a[0], b[0], g.progress)), y: Math.round(lerp(a[1], b[1], g.progress)) };
+        const pa = cellPx(a[0], a[1]), pb = cellPx(b[0], b[1]);
+        g.pixel = { x: lerp(pa.x, pb.x, g.progress), y: lerp(pa.y, pb.y, g.progress) };
+      }
+    }
+
+    // Sweep expired lit cells
+    const now = performance.now();
+    for (const [k, expiry] of litCells) {
+      if (expiry <= now) litCells.delete(k);
+    }
+
+    // Win/lose checks
+    if (player.cell.x === EXIT_CELL.x && player.cell.y === EXIT_CELL.y && player.moveT >= 1) {
+      phase = 'win';
+    } else {
+      for (const g of guards) {
+        const dx = g.pixel.x - player.pixel.x, dy = g.pixel.y - player.pixel.y;
+        if (Math.sqrt(dx * dx + dy * dy) < COLLISION_DIST) { phase = 'lose'; break; }
+      }
+    }
+  }
+
+  // ---------- Render ----------
+  function isLit(x, y) {
+    const e = litCells.get(cellKey(x, y));
+    return e !== undefined;
+  }
+
+  function render() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // HUD
+    ctx.fillStyle = '#0a0a12';
+    ctx.fillRect(0, 0, canvas.width, HUD_H);
+    ctx.fillStyle = pingCooldown > 0 ? '#665' : '#8f8';
+    ctx.font = '13px monospace';
+    ctx.fillText(pingCooldown > 0 ? `ping recharging (${(pingCooldown / 1000).toFixed(1)}s)` : 'ping ready [space]', 10, 25);
+
+    // Maze cells
+    for (let y = 0; y < MAZE_H; y++) {
+      for (let x = 0; x < MAZE_W; x++) {
+        const px = x * CELL_SIZE, py = HUD_H + y * CELL_SIZE;
+        const k = cellKey(x, y);
+        const known = remembered.has(k);
+        const lit = isLit(x, y);
+        const wall = isWall(x, y);
+        if (!known) {
+          ctx.fillStyle = '#000';
+          ctx.fillRect(px, py, CELL_SIZE, CELL_SIZE);
+          continue;
+        }
+        if (wall) {
+          ctx.fillStyle = lit ? '#3a3f66' : '#151827';
+        } else {
+          ctx.fillStyle = lit ? '#1c2540' : '#0c0e18';
+        }
+        ctx.fillRect(px, py, CELL_SIZE, CELL_SIZE);
+        if (!wall && x === EXIT_CELL.x && y === EXIT_CELL.y) {
+          ctx.fillStyle = lit ? '#ffd75e' : '#7a6a2e';
+          ctx.beginPath();
+          ctx.arc(px + CELL_SIZE / 2, py + CELL_SIZE / 2, CELL_SIZE * 0.28, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    }
+
+    // Player (always visible)
+    ctx.fillStyle = '#5ec8ff';
+    ctx.beginPath();
+    ctx.arc(player.pixel.x, player.pixel.y, CELL_SIZE * 0.26, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Pulse ring while a ping's flash is active anywhere (visual flourish)
+    if (litCells.size > 0) {
+      const maxAge = PING_FLASH_MS;
+      let newestExpiry = 0;
+      for (const e of litCells.values()) newestExpiry = Math.max(newestExpiry, e);
+      const remain = newestExpiry - performance.now();
+      const t = 1 - Math.max(0, Math.min(1, remain / maxAge));
+      ctx.strokeStyle = `rgba(120,180,255,${0.5 * (1 - t)})`;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(player.pixel.x, player.pixel.y, t * PING_DEPTH * CELL_SIZE, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    // Guards (only when their cell is currently lit)
+    for (const g of guards) {
+      if (!isLit(g.cell.x, g.cell.y)) continue;
+      ctx.fillStyle = '#ff5b5b';
+      ctx.beginPath();
+      ctx.arc(g.pixel.x, g.pixel.y, CELL_SIZE * 0.24, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Win/lose overlay
+    if (phase !== 'playing') {
+      ctx.fillStyle = 'rgba(0,0,0,0.72)';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = phase === 'win' ? '#8f8' : '#f88';
+      ctx.font = 'bold 22px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(phase === 'win' ? 'You reached the exit!' : 'A guard found you!', canvas.width / 2, canvas.height / 2 - 10);
+      ctx.font = '14px sans-serif';
+      ctx.fillStyle = '#ccc';
+      ctx.fillText('Press R to restart', canvas.width / 2, canvas.height / 2 + 18);
+      ctx.textAlign = 'left';
+    }
+  }
+
+  // ---------- Loop ----------
+  function frame(t) {
+    if (lastTime === undefined) lastTime = t;
+    let dt = t - lastTime;
+    lastTime = t;
+    dt = Math.min(dt, 50); // clamp huge gaps (tab-switch etc.)
+    update(dt);
+    render();
+    requestAnimationFrame(frame);
+  }
+
+  resetGame();
+  requestAnimationFrame(frame);
+
+  // ---------- Test hook ----------
+  window.__echoMaze = {
+    get playerCell() { return { x: player.cell.x, y: player.cell.y }; },
+    get playerPixel() { return { x: player.pixel.x, y: player.pixel.y }; },
+    get remembered() { return remembered; },
+    get lit() { return litCells; },
+    get guards() { return guards.map(g => ({ cell: { ...g.cell }, pixel: { ...g.pixel } })); },
+    get phase() { return phase; },
+    get pingCooldown() { return pingCooldown; },
+    ping() { doPing(false); },
+    reset() { resetGame(); },
+    // Test-only teleport: forces player onto a given cell to directly exercise
+    // win/lose detection without needing precise scripted input (see docs/test-results-cycle2.md).
+    _forcePlayerCell(x, y) {
+      player.cell = { x, y };
+      player.from = { x, y };
+      player.to = { x, y };
+      player.moveT = 1;
+      player.pixel = cellPx(x, y);
+    }
+  };
+})();
+</script>
+</body>
+</html>
