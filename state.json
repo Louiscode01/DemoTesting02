@@ -1,9 +1,9 @@
 {
   "cycle": 2,
   "cycleStarted": "2026-09-02T06:03:21Z",
-  "lastUpdated": "2026-09-02T06:03:21Z",
-  "phase": "research",
-  "nextPhase": "design",
+  "lastUpdated": "2026-09-02T06:12:00Z",
+  "phase": "design",
+  "nextPhase": "implementation",
   "selectedConcept": "Echo Maze",
   "checkpoints": [
     {
@@ -11,6 +11,12 @@
       "completedAt": "2026-09-02T06:03:21Z",
       "outputs": ["docs/cycle2/concepts.md"],
       "notes": "5 concepts brainstormed and scored, deliberately distinct from Cycle 1's lineup; Echo Maze selected (sonar-reveal stealth-puzzle), Tether Tag as fallback."
+    },
+    {
+      "phase": "design",
+      "completedAt": "2026-09-02T06:12:00Z",
+      "outputs": ["docs/cycle2/design.md"],
+      "notes": "Single-file HTML5 canvas architecture: grid maze, fog-of-war reveal via ambient radius + ping pulses, simple guard FSM (patrol/investigate), win/lose on exit/catch. Tunable constants and testing plan defined."
     }
   ],
   "blockers": [],
