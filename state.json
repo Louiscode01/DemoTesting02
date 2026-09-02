@@ -1,9 +1,9 @@
 {
   "cycle": 2,
   "cycleStarted": "2026-09-02T06:03:21Z",
-  "lastUpdated": "2026-09-02T06:25:00Z",
-  "phase": "implementation",
-  "nextPhase": "testing",
+  "lastUpdated": "2026-09-02T07:05:00Z",
+  "phase": "done",
+  "nextPhase": "research",
   "selectedConcept": "Echo Maze",
   "checkpoints": [
     {
@@ -23,10 +23,20 @@
       "completedAt": "2026-09-02T06:25:00Z",
       "outputs": ["game/cycle2/index.html"],
       "notes": "Self-contained playable prototype: deterministic serpentine-maze stealth game, fog-of-war reveal, BFS-based guard patrol/investigate AI (an upgrade over the design doc's ad-hoc steering fallback -- simpler and more robust), win/lose states, restart. No build step, no external assets/deps. Live (non-cached) test-hook getters exposed via window.__echoMaze, applying the cycle-1 lesson about stale snapshot hooks."
+    },
+    {
+      "phase": "testing",
+      "completedAt": "2026-09-02T07:05:00Z",
+      "outputs": ["tests/cycle2/echo-maze.test.js", "docs/cycle2/test-results.md"],
+      "notes": "Automated Playwright/headless-Chromium end-to-end tests: smoke checks (no console errors, canvas renders, movement/ping affect state) plus two full deterministic playthroughs -- known-solvable path reaches 'won', deliberate detour into the guard room reaches 'lost'. All 6/6 checks PASS. Found and fixed a bug in the test's own movement-settling logic (edge-hugging cell releases blocking the next connector) during development -- game code needed no changes. Investigate-state trigger and manual feel/balance playtesting flagged as follow-ups, not covered by automated tests."
     }
   ],
   "blockers": [],
-  "followUps": [],
+  "followUps": [
+    "Human/manual playtest of Echo Maze for feel/balance (PING_ALERT_RADIUS, CATCH_RADIUS, guard investigate behavior).",
+    "Automated test coverage for the guard's ping-triggered investigate state transition specifically (current lose test only exercises ordinary patrol-state contact).",
+    "Consider additional levels, guard vision cones, or procedural maze generation if this concept is revisited in a future cycle."
+  ],
   "priorCycles": [
     {
       "cycle": 1,
@@ -37,8 +47,18 @@
         "Automated end-to-end test of the win condition + restart flow.",
         "Consider a simple AI opponent or additional modes if this concept is revisited in a future cycle."
       ]
+    },
+    {
+      "cycle": 2,
+      "selectedConcept": "Echo Maze",
+      "outputs": ["docs/cycle2/concepts.md", "docs/cycle2/design.md", "game/cycle2/index.html", "tests/cycle2/echo-maze.test.js", "docs/cycle2/test-results.md"],
+      "followUpsCarried": [
+        "Human/manual playtest of Echo Maze for feel/balance (PING_ALERT_RADIUS, CATCH_RADIUS, guard investigate behavior).",
+        "Automated test coverage for the guard's ping-triggered investigate state transition specifically.",
+        "Consider additional levels, guard vision cones, or procedural maze generation if this concept is revisited in a future cycle."
+      ]
     }
   ],
-  "budgetNotes": "Cycle 2 in progress. Following Cycle 1's pattern: no subagent fan-out, single self-contained HTML file per prototype, commit+push after each phase as a checkpoint.",
-  "resumeInstructions": "Cycle 2 research phase complete (docs/cycle2/concepts.md, Echo Maze selected). Do not re-run research for cycle 2 -- resume at 'design' phase: write docs/cycle2/design.md (architecture/implementation plan for Echo Maze), then implement game/cycle2/index.html, then test and write docs/cycle2/test-results.md, updating this file's checkpoints/phase/nextPhase at each transition."
+  "budgetNotes": "Cycle 2 completed fully within budget, no usage-limit warning encountered. No subagent fan-out used, matching Cycle 1's approach. Single self-contained HTML file per prototype, commit+push after each phase as a checkpoint.",
+  "resumeInstructions": "Cycle 2 is complete (phase: done) with valid outputs at every checkpoint -- do not re-execute cycle 2's research/design/implementation/testing phases. On next invocation, start Cycle 3 at 'research': read docs/concepts.md and docs/cycle2/concepts.md for prior art (avoid re-proposing Orbit Duel/Gravity Flip Runner/Color Bind/Signal Weaver/Chrono Loop/Echo Maze/Tether Tag/Pulse Runner/Stack Attack/Mirror Duel verbatim; a genuine evolution of one is fine) and consider addressing the 'followUps' list above as one of the new cycle's candidate concepts."
 }
