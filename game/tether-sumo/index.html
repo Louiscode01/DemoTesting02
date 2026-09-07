@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tether Sumo</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #05060a;
+    color: #e8ecf4;
+    font-family: 'Courier New', Courier, monospace;
+    overflow: hidden;
+    height: 100%;
+  }
+  #wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+  }
+  canvas {
+    background: #05060a;
+    border: 1px solid #2a3040;
+    box-shadow: 0 0 40px rgba(80, 120, 255, 0.15);
+  }
+  #hint {
+    margin-top: 8px;
+    font-size: 12px;
+    color: #8b93a7;
+    text-align: center;
+    max-width: 900px;
+  }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="game" width="900" height="600"></canvas>
+  <div id="hint">
+    Player 1: A/D rotate, W thrust &nbsp;|&nbsp; Player 2: Left/Right rotate, Up thrust
+    &nbsp;|&nbsp; R to restart. First to 3 round wins takes the match. You're tied
+    together by an elastic tether — time your thrust with the snap-back to fling your
+    rival into the wall, not yourself.
+  </div>
+</div>
+<script>
+(function () {
+  'use strict';
+
+  // ---------- Tunable constants ----------
+  const ARENA_RADIUS = 260;
+  const SHIP_RADIUS = 10;
+  const SHIP_THRUST = 240;
+  const SHIP_TURN_RATE = 3.6;       // radians / sec
+  const SHIP_DRAG = 0.35;           // linear damping factor per second
+  const TETHER_REST_LENGTH = 90;
+  const TETHER_K = 9;               // spring constant
+  const TETHER_DAMPING = 1.6;       // damps relative velocity along the tether axis
+  const ARENA_DRIFT = 14;           // baseline outward push (accel, px/s^2)
+  const IDLE_DRIFT_RAMP = 12;       // additional outward accel per (idle-second)^2
+  const WINS_TO_TAKE_MATCH = 3;
+  const ROUND_RESULT_PAUSE = 1.4;   // seconds to show round-over banner before next round
+
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  const CENTER = { x: W / 2, y: H / 2 };
+
+  // ---------- Vector helpers ----------
+  const v = {
+    add: (a, b) => ({ x: a.x + b.x, y: a.y + b.y }),
+    sub: (a, b) => ({ x: a.x - b.x, y: a.y - b.y }),
+    scale: (a, s) => ({ x: a.x * s, y: a.y * s }),
+    len: (a) => Math.hypot(a.x, a.y),
+    norm: (a) => {
+      const l = Math.hypot(a.x, a.y) || 1;
+      return { x: a.x / l, y: a.y / l };
+    },
+    dot: (a, b) => a.x * b.x + a.y * b.y
+  };
+
+  // ---------- Starfield (static, seeded) ----------
+  function seededRandom(seed) {
+    let s = seed;
+    return function () {
+      s = (s * 9301 + 49297) % 233280;
+      return s / 233280;
+    };
+  }
+  const rand = seededRandom(4242);
+  const stars = [];
+  for (let i = 0; i < 140; i++) {
+    stars.push({
+      x: rand() * W,
+      y: rand() * H,
+      r: rand() * 1.4 + 0.3,
+      a: rand() * 0.6 + 0.3
+    });
+  }
+
+  // ---------- Entities ----------
+  const SPAWN_P1 = { x: CENTER.x - TETHER_REST_LENGTH / 2, y: CENTER.y };
+  const SPAWN_P2 = { x: CENTER.x + TETHER_REST_LENGTH / 2, y: CENTER.y };
+
+  function makeShip(id, color, spawn, angle, keys) {
+    return {
+      id, color, keys,
+      pos: { ...spawn },
+      vel: { x: 0, y: 0 },
+      angle,
+      alive: true,
+      thrusting: false,
+      roundWins: 0
+    };
+  }
+
+  const players = [
+    makeShip('P1', '#4ec9ff', SPAWN_P1, Math.PI, {
+      left: 'KeyA', right: 'KeyD', thrust: 'KeyW'
+    }),
+    makeShip('P2', '#ff5d73', SPAWN_P2, 0, {
+      left: 'ArrowLeft', right: 'ArrowRight', thrust: 'ArrowUp'
+    })
+  ];
+
+  let particles = [];
+  let matchOver = false;
+  let matchWinner = null;
+  let roundOver = false;
+  let roundLoser = null;
+  let roundOverAt = 0;
+  let lastInputAt = performance.now() / 1000;
+
+  const MOVEMENT_CODES = ['KeyA', 'KeyD', 'KeyW', 'ArrowLeft', 'ArrowRight', 'ArrowUp'];
+
+  // ---------- Input ----------
+  const keysDown = new Set();
+  window.addEventListener('keydown', (e) => {
+    keysDown.add(e.code);
+    if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.code)) {
+      e.preventDefault();
+    }
+    if (MOVEMENT_CODES.includes(e.code)) lastInputAt = performance.now() / 1000;
+    if (e.code === 'KeyR') resetMatch();
+  }, { passive: false });
+  window.addEventListener('keyup', (e) => keysDown.delete(e.code));
+
+  function resetMatch() {
+    players[0].roundWins = 0;
+    players[1].roundWins = 0;
+    matchOver = false;
+    matchWinner = null;
+    startRound();
+  }
+
+  function startRound() {
+    players[0].pos = { ...SPAWN_P1 };
+    players[0].vel = { x: 0, y: 0 };
+    players[0].angle = Math.PI;
+    players[0].alive = true;
+    players[1].pos = { ...SPAWN_P2 };
+    players[1].vel = { x: 0, y: 0 };
+    players[1].angle = 0;
+    players[1].alive = true;
+    particles = [];
+    roundOver = false;
+    roundLoser = null;
+    lastInputAt = performance.now() / 1000;
+  }
+  startRound();
+
+  function spawnExplosion(pos, color) {
+    for (let i = 0; i < 18; i++) {
+      const ang = Math.random() * Math.PI * 2;
+      const speed = 40 + Math.random() * 120;
+      particles.push({
+        pos: { ...pos },
+        vel: { x: Math.cos(ang) * speed, y: Math.sin(ang) * speed },
+        life: 0.5 + Math.random() * 0.4,
+        color
+      });
+    }
+  }
+
+  function endRound(loser) {
+    roundOver = true;
+    roundLoser = loser.id;
+    roundOverAt = performance.now() / 1000;
+    const winner = players.find(p => p.id !== loser.id);
+    winner.roundWins += 1;
+    if (winner.roundWins >= WINS_TO_TAKE_MATCH) {
+      matchOver = true;
+      matchWinner = winner.id;
+    }
+  }
+
+  // ---------- Physics ----------
+  function step(dt, now) {
+    if (matchOver) return;
+    if (roundOver) {
+      if (now - roundOverAt >= ROUND_RESULT_PAUSE) startRound();
+      return;
+    }
+
+    const [p1, p2] = players;
+
+    // Idle-escalating outward drift: a *constant* outward push against a linear
+    // spring just settles at a new (small) equilibrium stretch and never resolves
+    // the round (found via the no-input soak test) -- so instead the drift grows
+    // with how long it's been since anyone pressed a movement key. Any input at
+    // all resets the idle clock, so active play is unaffected; true idleness
+    // eventually overwhelms any tether stretch and forces an elimination.
+    const idleSeconds = Math.max(0, now - lastInputAt);
+    const driftAccel = ARENA_DRIFT + IDLE_DRIFT_RAMP * idleSeconds * idleSeconds;
+
+    // Per-ship control forces (thrust, rotation, drag, outward drift).
+    for (const ship of players) {
+      const k = ship.keys;
+      if (keysDown.has(k.left)) ship.angle -= SHIP_TURN_RATE * dt;
+      if (keysDown.has(k.right)) ship.angle += SHIP_TURN_RATE * dt;
+
+      ship.thrusting = keysDown.has(k.thrust);
+      if (ship.thrusting) {
+        const thrustVec = { x: Math.cos(ship.angle), y: Math.sin(ship.angle) };
+        ship.vel = v.add(ship.vel, v.scale(thrustVec, SHIP_THRUST * dt));
+      }
+
+      // Outward drift from arena center: guarantees a passive round still
+      // resolves (anti-stalemate) instead of the tether settling forever at rest.
+      const fromCenter = v.sub(ship.pos, CENTER);
+      const centerDist = v.len(fromCenter);
+      if (centerDist > 1) {
+        const driftDir = v.scale(fromCenter, 1 / centerDist);
+        ship.vel = v.add(ship.vel, v.scale(driftDir, driftAccel * dt));
+      }
+    }
+
+    // Tether spring force between the two ships (rope, not rigid rod: only pulls,
+    // never pushes, so it never fires while the ships are closer than rest length).
+    const delta = v.sub(p2.pos, p1.pos);
+    const dist = Math.max(v.len(delta), 0.001);
+    const dir = v.scale(delta, 1 / dist);
+    const stretch = Math.max(0, dist - TETHER_REST_LENGTH);
+    if (stretch > 0) {
+      const springForce = TETHER_K * stretch;
+      const relVel = v.sub(p2.vel, p1.vel);
+      const closingSpeed = v.dot(relVel, dir);
+      const dampingForce = TETHER_DAMPING * closingSpeed;
+      const forceMag = springForce + dampingForce;
+      const impulse = v.scale(dir, forceMag * dt);
+      p1.vel = v.add(p1.vel, impulse);
+      p2.vel = v.sub(p2.vel, impulse);
+    }
+
+    // Drag + integrate + boundary check.
+    for (const ship of players) {
+      ship.vel = v.scale(ship.vel, Math.max(0, 1 - SHIP_DRAG * dt));
+      ship.pos = v.add(ship.pos, v.scale(ship.vel, dt));
+
+      const distFromCenter = v.len(v.sub(ship.pos, CENTER));
+      if (distFromCenter > ARENA_RADIUS - SHIP_RADIUS) {
+        spawnExplosion(ship.pos, ship.color);
+        ship.alive = false;
+      }
+    }
+
+    if (!p1.alive || !p2.alive) {
+      // If both cross the same instant, treat it as a shared loss for whichever
+      // is further out (rare edge case; deterministic tie-break keeps state sane).
+      if (!p1.alive && !p2.alive) {
+        const d1 = v.len(v.sub(p1.pos, CENTER));
+        const d2 = v.len(v.sub(p2.pos, CENTER));
+        endRound(d1 >= d2 ? p1 : p2);
+      } else {
+        endRound(!p1.alive ? p1 : p2);
+      }
+    }
+
+    // particles
+    for (const p of particles) {
+      p.pos = v.add(p.pos, v.scale(p.vel, dt));
+      p.life -= dt;
+    }
+    particles = particles.filter(p => p.life > 0);
+  }
+
+  // ---------- Render ----------
+  function drawStarfield() {
+    ctx.fillStyle = '#05060a';
+    ctx.fillRect(0, 0, W, H);
+    for (const s of stars) {
+      ctx.globalAlpha = s.a;
+      ctx.fillStyle = '#cfe0ff';
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function drawArena() {
+    ctx.strokeStyle = '#3a4258';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(CENTER.x, CENTER.y, ARENA_RADIUS, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  function drawTether() {
+    const [p1, p2] = players;
+    if (!p1.alive || !p2.alive) return;
+    const dist = v.len(v.sub(p2.pos, p1.pos));
+    const stretch = Math.max(0, dist - TETHER_REST_LENGTH);
+    const tension = Math.min(1, stretch / (TETHER_REST_LENGTH * 1.5));
+    ctx.strokeStyle = `rgba(${180 + tension * 75}, ${210 - tension * 150}, 255, ${0.5 + tension * 0.5})`;
+    ctx.lineWidth = 1.5 + tension * 4;
+    ctx.beginPath();
+    ctx.moveTo(p1.pos.x, p1.pos.y);
+    ctx.lineTo(p2.pos.x, p2.pos.y);
+    ctx.stroke();
+  }
+
+  function drawShip(ship) {
+    if (!ship.alive) return;
+    ctx.save();
+    ctx.translate(ship.pos.x, ship.pos.y);
+    ctx.rotate(ship.angle);
+
+    if (ship.thrusting) {
+      ctx.fillStyle = 'rgba(255,150,60,0.9)';
+      ctx.beginPath();
+      ctx.moveTo(-SHIP_RADIUS, 0);
+      ctx.lineTo(-SHIP_RADIUS - 10 - Math.random() * 6, 0);
+      ctx.lineTo(-SHIP_RADIUS, 5);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    ctx.fillStyle = ship.color;
+    ctx.beginPath();
+    ctx.moveTo(SHIP_RADIUS, 0);
+    ctx.lineTo(-SHIP_RADIUS * 0.8, SHIP_RADIUS * 0.7);
+    ctx.lineTo(-SHIP_RADIUS * 0.4, 0);
+    ctx.lineTo(-SHIP_RADIUS * 0.8, -SHIP_RADIUS * 0.7);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function drawParticles() {
+    for (const p of particles) {
+      ctx.globalAlpha = Math.max(0, p.life);
+      ctx.fillStyle = p.color;
+      ctx.beginPath();
+      ctx.arc(p.pos.x, p.pos.y, 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function drawHUD() {
+    ctx.font = '20px "Courier New", monospace';
+    ctx.fillStyle = players[0].color;
+    ctx.fillText('P1 rounds: ' + players[0].roundWins, 20, 30);
+    ctx.fillStyle = players[1].color;
+    ctx.textAlign = 'right';
+    ctx.fillText('P2 rounds: ' + players[1].roundWins, W - 20, 30);
+    ctx.textAlign = 'left';
+
+    if (roundOver && !matchOver) {
+      const loserShip = players.find(p => p.id === roundLoser);
+      ctx.textAlign = 'center';
+      ctx.fillStyle = loserShip.color;
+      ctx.font = '28px "Courier New", monospace';
+      ctx.fillText(roundLoser + ' eliminated', W / 2, H / 2);
+      ctx.textAlign = 'left';
+    }
+
+    if (matchOver) {
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.fillRect(0, 0, W, H);
+      ctx.textAlign = 'center';
+      const winnerShip = players.find(p => p.id === matchWinner);
+      ctx.fillStyle = winnerShip.color;
+      ctx.font = '42px "Courier New", monospace';
+      ctx.fillText(matchWinner + ' WINS THE MATCH', W / 2, H / 2 - 10);
+      ctx.fillStyle = '#e8ecf4';
+      ctx.font = '18px "Courier New", monospace';
+      ctx.fillText('Press R to restart', W / 2, H / 2 + 26);
+      ctx.textAlign = 'left';
+    }
+  }
+
+  function render() {
+    drawStarfield();
+    drawArena();
+    drawTether();
+    drawParticles();
+    for (const ship of players) drawShip(ship);
+    drawHUD();
+  }
+
+  // ---------- Main loop ----------
+  let lastTime = performance.now();
+  function frame(now) {
+    const dt = Math.min((now - lastTime) / 1000, 1 / 30); // clamp to avoid spiral of death
+    lastTime = now;
+    step(dt, now / 1000);
+    render();
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  // Expose minimal hooks for automated smoke testing.
+  // NOTE: `particles`, `roundOver`, and `matchOver` are reassigned each frame, so
+  // these must be live getters, not object-literal snapshots of the initial value
+  // (Cycle 1 / Orbit Duel hit exactly this staleness bug during testing).
+  window.__tetherSumo = {
+    players,
+    get particles() { return particles; },
+    get roundOver() { return roundOver; },
+    get roundLoser() { return roundLoser; },
+    get matchOver() { return matchOver; },
+    get matchWinner() { return matchWinner; }
+  };
+})();
+</script>
+</body>
+</html>

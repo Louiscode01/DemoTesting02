@@ -1,42 +1,81 @@
 {
-  "cycle": 1,
-  "cycleStarted": "2026-08-31T12:55:00Z",
-  "lastUpdated": "2026-08-31T13:40:00Z",
+  "cycle": 2,
+  "cycleStarted": "2026-09-07T00:00:00Z",
+  "lastUpdated": "2026-09-07T01:00:00Z",
   "phase": "done",
   "nextPhase": "research",
-  "selectedConcept": "Orbit Duel",
+  "selectedConcept": "Tether Sumo",
   "checkpoints": [
     {
       "phase": "research",
-      "completedAt": "2026-08-31T12:58:00Z",
-      "outputs": ["docs/concepts.md"],
-      "notes": "5 concepts brainstormed and scored; Orbit Duel selected, Gravity Flip Runner as fallback."
+      "completedAt": "2026-09-07T00:10:00Z",
+      "outputs": ["docs/concepts-cycle2.md"],
+      "notes": "5 concepts brainstormed and scored; Tether Sumo selected (elastic-tether local 2-player arcade), Comet Sweep as fallback. Orbit Duel AI-rival evolution and Cycle 1 follow-ups deferred as 'polish' candidates, not new-prototype work."
     },
     {
       "phase": "design",
-      "completedAt": "2026-08-31T13:02:00Z",
-      "outputs": ["docs/design.md"],
-      "notes": "Single-file HTML5 canvas architecture, tunable constants, testing plan defined."
+      "completedAt": "2026-09-07T00:20:00Z",
+      "outputs": ["docs/design-cycle2.md"],
+      "notes": "Single-file HTML5 canvas architecture at game/tether-sumo/index.html (Cycle 1's game/index.html untouched). Spring-tether physics, anti-stalemate outward drift, live test-hook getters (avoiding Cycle 1's snapshot-staleness bug), and a test plan that includes win-condition/restart e2e from the start."
     },
     {
       "phase": "implementation",
-      "completedAt": "2026-08-31T13:25:00Z",
-      "outputs": ["game/index.html"],
-      "notes": "Self-contained playable prototype: 2-player local gravity-duel arcade game, no build step, no external assets/deps."
+      "completedAt": "2026-09-07T00:35:00Z",
+      "outputs": ["game/tether-sumo/index.html"],
+      "notes": "Self-contained playable prototype: 2-player local elastic-tether sumo arcade game, no build step, no external assets/deps. Implements spring+damping tether force, anti-stalemate outward drift, round/match state machine (best of 3), live test-hook getters per design doc."
     },
     {
       "phase": "testing",
-      "completedAt": "2026-08-31T13:40:00Z",
-      "outputs": ["docs/test-results.md"],
-      "notes": "Automated Playwright/headless-Chromium smoke tests: load+interaction test and ~6s extended-session test, both PASS. Found and fixed one test-hook staleness bug (window.__orbitDuel.bullets snapshot vs live getter) during testing. Win-condition end-to-end and fun/balance tuning are NOT covered by automated tests -- flagged as follow-up."
+      "completedAt": "2026-09-07T01:00:00Z",
+      "outputs": ["docs/test-results-cycle2.md", "tests/test-tether-sumo.js"],
+      "notes": "Automated Playwright/headless-Chromium tests: load+interaction smoke test, no-input soak test, and win-condition+restart e2e test, all PASS. Found and fixed a real anti-stalemate design bug during testing: constant outward drift force against the linear tether spring settled into a permanent near-center equilibrium and never resolved a round; fixed with idle-time-escalating drift (reset on any input). Fun/balance tuning still not human-playtested -- flagged as follow-up."
     }
   ],
   "blockers": [],
   "followUps": [
-    "Human/manual playtest of Orbit Duel for feel/balance tuning (SHIP_THRUST, SHIP_DRAG, G, BULLET_SPEED).",
-    "Automated end-to-end test of the win condition + restart flow.",
-    "Consider a simple AI opponent or additional modes if this concept is revisited in a future cycle."
+    "Human/manual playtest of Tether Sumo for feel/balance tuning (SHIP_THRUST, TETHER_K, TETHER_DAMPING, ARENA_DRIFT, IDLE_DRIFT_RAMP).",
+    "Automated test for the simultaneous-double-elimination tie-break edge case.",
+    "Cycle 1 follow-ups remain open and deferred: Orbit Duel manual playtest tuning, Orbit Duel win-condition e2e test, and a possible Orbit Duel AI-opponent mode -- good candidates for a future 'polish/iterate' cycle rather than a new-prototype cycle."
   ],
-  "budgetNotes": "Single-session run, no subagent fan-out used to conserve budget. Implementation kept to one self-contained HTML file (no build step) to keep scope tight. Cycle 1 completed fully within budget with no usage-limit warning encountered.",
-  "resumeInstructions": "Cycle 1 is complete (phase: done) with valid outputs at every checkpoint -- do not re-execute cycle 1's research/design/implementation/testing phases. On next invocation, start Cycle 2 at 'research': read docs/concepts.md for prior art (avoid re-proposing Orbit Duel/Gravity Flip Runner/Color Bind/Signal Weaver/Chrono Loop verbatim; a genuine evolution of one is fine) and consider addressing the 'followUps' list above (e.g. iterating on Orbit Duel) as one of the new cycle's candidate concepts."
+  "budgetNotes": "Cycle 2 completed 2026-09-07 in a single session, no subagent fan-out, continuing Cycle 1's approach to conserve budget. Implementation kept to one self-contained HTML file (no build step). Test script committed to tests/ for reuse. Cycle 2 completed fully within budget with no usage-limit warning encountered.",
+  "resumeInstructions": "Cycle 2 is complete (phase: done) with valid outputs at every checkpoint -- do not re-execute cycle 2's research/design/implementation/testing phases. On next invocation, start Cycle 3 at 'research': read docs/concepts.md and docs/concepts-cycle2.md for prior art (avoid re-proposing Orbit Duel/Gravity Flip Runner/Color Bind/Signal Weaver/Chrono Loop/Tether Sumo/Comet Sweep/Pulse Grid verbatim; a genuine evolution of one is fine) and consider addressing the 'followUps' list above as one of the new cycle's candidate concepts, or explicitly scope a 'polish/iterate' cycle on Orbit Duel or Tether Sumo instead of a new prototype if that seems higher-value. Cycle 1 archive is in previousCycles below (outputs preserved on disk: docs/concepts.md, docs/design.md, game/index.html, docs/test-results.md -- do not overwrite). Cycle 2 outputs preserved on disk: docs/concepts-cycle2.md, docs/design-cycle2.md, game/tether-sumo/index.html, docs/test-results-cycle2.md, tests/test-tether-sumo.js -- do not overwrite.",
+  "previousCycles": [
+    {
+      "cycle": 1,
+      "phase": "done",
+      "cycleStarted": "2026-08-31T12:55:00Z",
+      "selectedConcept": "Orbit Duel",
+      "checkpoints": [
+        {
+          "phase": "research",
+          "completedAt": "2026-08-31T12:58:00Z",
+          "outputs": ["docs/concepts.md"],
+          "notes": "5 concepts brainstormed and scored; Orbit Duel selected, Gravity Flip Runner as fallback."
+        },
+        {
+          "phase": "design",
+          "completedAt": "2026-08-31T13:02:00Z",
+          "outputs": ["docs/design.md"],
+          "notes": "Single-file HTML5 canvas architecture, tunable constants, testing plan defined."
+        },
+        {
+          "phase": "implementation",
+          "completedAt": "2026-08-31T13:25:00Z",
+          "outputs": ["game/index.html"],
+          "notes": "Self-contained playable prototype: 2-player local gravity-duel arcade game, no build step, no external assets/deps."
+        },
+        {
+          "phase": "testing",
+          "completedAt": "2026-08-31T13:40:00Z",
+          "outputs": ["docs/test-results.md"],
+          "notes": "Automated Playwright/headless-Chromium smoke tests: load+interaction test and ~6s extended-session test, both PASS. Found and fixed one test-hook staleness bug (window.__orbitDuel.bullets snapshot vs live getter) during testing. Win-condition end-to-end and fun/balance tuning are NOT covered by automated tests -- flagged as follow-up."
+        }
+      ],
+      "followUps": [
+        "Human/manual playtest of Orbit Duel for feel/balance tuning (SHIP_THRUST, SHIP_DRAG, G, BULLET_SPEED).",
+        "Automated end-to-end test of the win condition + restart flow.",
+        "Consider a simple AI opponent or additional modes if this concept is revisited in a future cycle."
+      ]
+    }
+  ]
 }
