@@ -1,0 +1,84 @@
+{
+  "agent": "tether-sumo-mechanics",
+  "scope": "Mechanics / gameplay / game-feel only. No art or visual changes -- the geometric placeholder look (triangle ships, circle arena, glowing tether line), colours and fonts are owned by a later game-art agent. Does not touch game/index.html (Orbit Duel) or other prototypes.",
+  "branch": "claude/tether-sumo-mechanics-c3bde9",
+  "baseBranch": "claude/magical-turing-tzdmym",
+  "iteration": 1,
+  "lastUpdated": "2026-09-08",
+  "iterations": [
+    {
+      "iteration": 1,
+      "date": "2026-09-08",
+      "direction": "Contact physics: make the two forces that decide every round -- the rope and ship-vs-ship contact -- actually behave the way the game's premise claims.",
+      "pickedFrom": [
+        "followUp: 'Human/manual playtest of Tether Sumo for feel/balance tuning' -- done as the reasoned/instrumented version, since no human playtest is available to this agent.",
+        "followUp: 'Automated test for the simultaneous-double-elimination tie-break edge case' -- closed."
+      ],
+      "changes": [
+        {
+          "type": "bugfix",
+          "title": "Tether is now pull-only (a rope never pushes)",
+          "what": "forceMag = spring + damping was used unclamped. `dir` runs p1->p2 so the projected relative velocity is a SEPARATION speed; while the ships close it is negative, and it could drive the total negative. A negative pull is a push.",
+          "evidence": "Instrumented a free recoil from 100px of stretch. The raw sum crosses zero once stretch falls below ~41px and stays negative for the whole remaining third of the snap-back, bottoming out near -298 -- about 600px/s^2 of outward relative acceleration, more than two ships at full thrust. The rope was braking and then actively shoving the ships apart through the back half of the exact fling the game is built around.",
+          "fix": "forceMag = Math.max(0, springForce + dampingForce). Renamed the misleading `closingSpeed` to `separationSpeed`. Added a `ropePushSuppressedCount` counter so the clamp can be shown to be load-bearing rather than dead code.",
+          "expectedEffect": "Snap-backs land instead of being partly cancelled. The tether reads as a rope: it pulls, or it goes slack."
+        },
+        {
+          "type": "new-mechanic",
+          "title": "Ship-vs-ship body check (the 'sumo' of Tether Sumo)",
+          "what": "The two ships had no collision at all and slid straight through each other, so the only way to score was to be flung by the rope. Shoving -- the move the premise promises -- did nothing.",
+          "fix": "resolveBodyCheck(): positional de-overlap split evenly, then an elastic impulse along the contact normal, resolved only while the ships are actually closing so a separating pair cannot be re-kicked every frame. Equal masses at SHIP_RESTITUTION = 0.9, so ramming a stationary rival hands them ~95% of your speed and stops you nearly dead (measured: 220px/s in -> 190px/s out, attacker left at 6.7px/s). Runs on freshly integrated positions and BEFORE the boundary check, so shoving a rival over the edge eliminates them on the same frame.",
+          "expectedEffect": "Adds the push half of a push-pull game. Closing distance is now an offensive option, not just rope management."
+        },
+        {
+          "type": "tests",
+          "title": "Test harness made portable + 4 new tests",
+          "what": "tests/test-tether-sumo.js had the cloud sandbox's absolute paths hard-coded (playwright module, chromium binary, game file). Now all three are env-overridable (PLAYWRIGHT_MODULE, PW_CHROMIUM, PW_EXTRA_ARGS, TETHER_SUMO_GAME) with the original paths as defaults, so existing CI is unchanged. Also switched from one shared browser to one browser per test: some sandboxes can only run chromium with --single-process, where browser and renderer are the same process and closing the last page tore down the whole browser, failing every test after the first."
+        }
+      ],
+      "newTunables": {
+        "SHIP_RESTITUTION": 0.9
+      },
+      "newTestHooks": [
+        "tetherForce -- last frame's tether force magnitude; must never be negative",
+        "bodyCheckCount -- cumulative resolved ship-vs-ship collisions",
+        "ropePushSuppressedCount -- cumulative frames where the unclamped rope would have pushed",
+        "constants -- ARENA_RADIUS, SHIP_RADIUS, TETHER_REST_LENGTH, CENTER, for tests to position ships without duplicating magic numbers"
+      ],
+      "testResults": {
+        "runner": "Playwright + headless Chromium (chromium_headless_shell 131.0.6778.33, playwright-core 1.49.1), 7/7 PASS, no page errors",
+        "environmentNote": "The dev machine's sandbox blocks unix sockets and Mach port registration, so full Chrome and normal multi-process chromium both abort on launch. Working combination: playwright headless_shell with --single-process --in-process-gpu --disable-gpu --disable-dev-shm-usage, one browser per test.",
+        "tests": [
+          { "name": "Load + basic interaction smoke test", "result": "PASS", "detail": "7688 non-background pixels, P1 moved 22.4px on thrust" },
+          { "name": "No-input soak test (anti-stalemate drift)", "result": "PASS", "detail": "round resolved after 18s of zero input" },
+          { "name": "Round/match win-condition + restart end-to-end", "result": "PASS", "detail": "P1 took the match 3-0, R reset both scores" },
+          { "name": "Body check transfers momentum", "result": "PASS", "detail": "220px/s ram -> attacker 6.7px/s, target 190.2px/s, no sink-through" },
+          { "name": "Overlapping ships separate (no sink-through / NaN)", "result": "PASS", "detail": "2px overlap recovered to 20.9px, all coordinates finite" },
+          { "name": "Tether is pull-only (rope never pushes)", "result": "PASS", "detail": "per-frame minimum tether force 0 across the whole session; 34 push-frames suppressed during seeded recoils, 68 total including emergent play" },
+          { "name": "Simultaneous double-elimination tie-break", "result": "PASS", "detail": "both eliminated on one frame, loss correctly assigned to the further-out ship (P1)" }
+        ],
+        "mutationCheck": "Both fixes were verified non-vacuously by mutation. Reverting the pull-only clamp fails ONLY 'Tether is pull-only'. Disabling resolveBodyCheck fails ONLY the two collision tests. No other test moved in either mutant."
+      },
+      "notPlaytestedByHuman": true
+    }
+  ],
+  "knownFeelIssues": [
+    "lastInputAt is only refreshed on keydown events, so the anti-stalemate idle ramp depends on OS/browser key auto-repeat to keep resetting while a key is HELD. On a platform with slow or disabled key repeat, a player holding thrust could be treated as idle and get ramped into the wall. Should be driven by 'is any movement key currently down' inside step() instead. Not yet observed failing -- untested hypothesis.",
+    "Rounds are decided almost entirely by the anti-stalemate outward drift rather than by player action in passive play (the no-input soak resolves in ~18s). Worth checking whether ARENA_DRIFT/IDLE_DRIFT_RAMP now overwhelm the tether in ACTIVE play too, especially now that the snap-back is no longer self-cancelling.",
+    "The snap-back is materially stronger after the pull-only fix. TETHER_DAMPING = 1.6 was tuned against the old, partly self-cancelling rope and may now be off. Deferred deliberately: retuning in the same iteration as the fix would confound the two.",
+    "No single-player mode -- the prototype cannot be evaluated at all without two people at one keyboard."
+  ],
+  "nextDirection": {
+    "primary": "Single-player AI opponent. It is the highest-value item left: the game currently cannot be exercised by one person, and it is the only follow-up carried over from both Cycle 1 and Cycle 2. Suggested scope for one iteration: a mode toggle (2P / vs AI) plus one AI that reads tether stretch and arena position -- thrust inward when near the wall, exploit the snap-back window, and now that body checks exist, close for a ram when it holds the momentum advantage. Testable headlessly by letting the AI play a full match and asserting it wins meaningfully more than a do-nothing opponent.",
+    "alternatives": [
+      "Retune TETHER_DAMPING / TETHER_K against the now-correct rope, using the tetherForce hook to measure snap-back impulse rather than guessing.",
+      "Fix the keydown-only idle timer (see knownFeelIssues) -- small, and removes a platform-dependent failure mode.",
+      "Arena variant: a shrinking ring, which would let ARENA_DRIFT/IDLE_DRIFT_RAMP be cut back or removed entirely and replace a crude anti-stalemate hack with a readable mechanic."
+    ]
+  },
+  "conventions": {
+    "runTests": "node tests/test-tether-sumo.js  (set PLAYWRIGHT_MODULE / PW_CHROMIUM / PW_EXTRA_ARGS / TETHER_SUMO_GAME if not on the original cloud sandbox)",
+    "gameFile": "game/tether-sumo/index.html -- single self-contained file, no build step, no external dependencies",
+    "changeSize": "One small, independently verifiable direction per iteration. Every new mechanic ships with a test that fails when the mechanic is removed."
+  }
+}

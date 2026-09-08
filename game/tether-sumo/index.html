@@ -42,7 +42,8 @@
     Player 1: A/D rotate, W thrust &nbsp;|&nbsp; Player 2: Left/Right rotate, Up thrust
     &nbsp;|&nbsp; R to restart. First to 3 round wins takes the match. You're tied
     together by an elastic tether — time your thrust with the snap-back to fling your
-    rival into the wall, not yourself.
+    rival into the wall, not yourself. Ram them head-on to body-check your whole
+    closing momentum into them.
   </div>
 </div>
 <script>
@@ -58,6 +59,7 @@
   const TETHER_REST_LENGTH = 90;
   const TETHER_K = 9;               // spring constant
   const TETHER_DAMPING = 1.6;       // damps relative velocity along the tether axis
+  const SHIP_RESTITUTION = 0.9;     // bounciness of a ship-vs-ship body check (1 = perfectly elastic)
   const ARENA_DRIFT = 14;           // baseline outward push (accel, px/s^2)
   const IDLE_DRIFT_RAMP = 12;       // additional outward accel per (idle-second)^2
   const WINS_TO_TAKE_MATCH = 3;
@@ -132,6 +134,15 @@
   let roundLoser = null;
   let roundOverAt = 0;
   let lastInputAt = performance.now() / 1000;
+  // Diagnostics for the automated mechanics tests (and future tuning). Cumulative
+  // across the whole session on purpose: a per-round counter would reset out from
+  // under a test that happens to straddle a round transition.
+  let lastTetherForce = 0;
+  let bodyCheckCount = 0;
+  // Counts frames where the raw spring+damping sum came out negative, i.e. where
+  // the old unclamped rope would have shoved the ships apart. A non-zero value
+  // during normal play is the evidence that the pull-only clamp is load-bearing.
+  let ropePushSuppressedCount = 0;
 
   const MOVEMENT_CODES = ['KeyA', 'KeyD', 'KeyW', 'ArrowLeft', 'ArrowRight', 'ArrowUp'];
 
@@ -197,6 +208,39 @@
   }
 
   // ---------- Physics ----------
+
+  // Ship-vs-ship contact: the actual "sumo" of Tether Sumo. Previously the two
+  // ships had no collision at all and simply slid through each other, so the only
+  // way to score was to be flung by the rope -- shoving, the move the premise
+  // promises, did nothing. Both ships have equal mass, so an elastic collision
+  // along the contact normal essentially swaps their normal-velocity components:
+  // ram a stationary rival at speed and you hand them all of it and stop dead.
+  function resolveBodyCheck() {
+    const [p1, p2] = players;
+    const delta = v.sub(p2.pos, p1.pos);
+    const dist = Math.max(v.len(delta), 0.001);
+    const minDist = SHIP_RADIUS * 2;
+    if (dist >= minDist) return;
+
+    const n = v.scale(delta, 1 / dist); // contact normal, p1 -> p2
+
+    // Push them apart evenly so they can never sink into one another and stick.
+    const overlap = (minDist - dist) / 2;
+    p1.pos = v.sub(p1.pos, v.scale(n, overlap));
+    p2.pos = v.add(p2.pos, v.scale(n, overlap));
+
+    // Only exchange momentum if they are actually closing, otherwise a pair that
+    // is already separating would get a second, spurious kick every frame.
+    const approachSpeed = v.dot(v.sub(p2.vel, p1.vel), n); // negative = closing
+    if (approachSpeed >= 0) return;
+
+    // Equal masses: j = -(1 + e) * v_rel_n / (1/m1 + 1/m2), with m1 = m2 = 1.
+    const j = -(1 + SHIP_RESTITUTION) * approachSpeed / 2;
+    p1.vel = v.sub(p1.vel, v.scale(n, j));
+    p2.vel = v.add(p2.vel, v.scale(n, j));
+    bodyCheckCount += 1;
+  }
+
   function step(dt, now) {
     if (matchOver) return;
     if (roundOver) {
@@ -246,19 +290,42 @@
     if (stretch > 0) {
       const springForce = TETHER_K * stretch;
       const relVel = v.sub(p2.vel, p1.vel);
-      const closingSpeed = v.dot(relVel, dir);
-      const dampingForce = TETHER_DAMPING * closingSpeed;
-      const forceMag = springForce + dampingForce;
+      // `dir` runs p1 -> p2, so a positive projection means the ships are moving
+      // APART. Positive damping therefore adds to the pull while they separate and
+      // subtracts from it while they close, which is what we want -- but the
+      // subtraction could previously drive forceMag negative, and a negative pull
+      // is a push. Measured on a free recoil from 100px of stretch, the raw sum
+      // went negative once stretch fell below ~41px and stayed negative for the
+      // whole remaining third of the snap-back, bottoming out near -298 (about
+      // 600px/s^2 of outward relative acceleration, i.e. more than two ships at
+      // full thrust). So the "rope" was braking and then actively shoving the
+      // ships apart through the back half of the very fling the game is built
+      // around. Clamp it: a rope pulls or goes slack, it never pushes.
+      const separationSpeed = v.dot(relVel, dir);
+      const dampingForce = TETHER_DAMPING * separationSpeed;
+      const rawForce = springForce + dampingForce;
+      if (rawForce < 0) ropePushSuppressedCount += 1;
+      const forceMag = Math.max(0, rawForce);
+      lastTetherForce = forceMag;
       const impulse = v.scale(dir, forceMag * dt);
       p1.vel = v.add(p1.vel, impulse);
       p2.vel = v.sub(p2.vel, impulse);
+    } else {
+      lastTetherForce = 0;
     }
 
-    // Drag + integrate + boundary check.
+    // Drag + integrate.
     for (const ship of players) {
       ship.vel = v.scale(ship.vel, Math.max(0, 1 - SHIP_DRAG * dt));
       ship.pos = v.add(ship.pos, v.scale(ship.vel, dt));
+    }
 
+    // Body check runs on the freshly integrated positions, and *before* the
+    // boundary check, so shoving a rival over the edge eliminates them this frame.
+    resolveBodyCheck();
+
+    // Boundary check.
+    for (const ship of players) {
       const distFromCenter = v.len(v.sub(ship.pos, CENTER));
       if (distFromCenter > ARENA_RADIUS - SHIP_RADIUS) {
         spawnExplosion(ship.pos, ship.color);
@@ -423,7 +490,14 @@
     get roundOver() { return roundOver; },
     get roundLoser() { return roundLoser; },
     get matchOver() { return matchOver; },
-    get matchWinner() { return matchWinner; }
+    get matchWinner() { return matchWinner; },
+    // Mechanics diagnostics: `tetherForce` must never go negative (a rope pulls or
+    // goes slack, it never pushes) and `bodyCheckCount` counts resolved ship-vs-ship
+    // collisions. Both are live getters for the same staleness reason as above.
+    get tetherForce() { return lastTetherForce; },
+    get bodyCheckCount() { return bodyCheckCount; },
+    get ropePushSuppressedCount() { return ropePushSuppressedCount; },
+    constants: { ARENA_RADIUS, SHIP_RADIUS, TETHER_REST_LENGTH, CENTER }
   };
 })();
 </script>
