@@ -1,9 +1,9 @@
 {
   "cycle": 2,
   "cycleStarted": "2026-09-08T00:00:00Z",
-  "lastUpdated": "2026-09-08T00:55:00Z",
-  "phase": "implementation",
-  "nextPhase": "testing",
+  "lastUpdated": "2026-09-08T01:20:00Z",
+  "phase": "done",
+  "nextPhase": "research",
   "selectedConcept": "Orbit Duel: AI Rival",
   "checkpoints": [
     {
@@ -23,10 +23,21 @@
       "completedAt": "2026-09-08T00:55:00Z",
       "outputs": ["game/cycle2/index.html"],
       "notes": "Self-contained playable prototype per docs/cycle2/design.md: intent layer, menu/playing/gameover state machine, mode-select screen (1P vs AI / 2P local), deterministic priority-arbitrated AI (evade/orbit/engage), registerHit() extracted as the single scoring path, full window.__orbitDuel.test hook surface (setPaused/step/updateAI/registerHit/startMatch/toMenu). Verified game/index.html (Cycle 1) is byte-for-byte unchanged (git diff --quiet passes)."
+    },
+    {
+      "phase": "testing",
+      "completedAt": "2026-09-08T01:20:00Z",
+      "outputs": ["docs/cycle2/test-results.md", "tests/cycle2/t1-regression.js", "tests/cycle2/t2-win-condition.js", "tests/cycle2/t3-ai-behavior.js", "tests/cycle2/t4-mode-select.js"],
+      "notes": "Automated Playwright/headless-Chromium tests, all PASS: T2 win-condition end-to-end (Cycle 1's top follow-up, now closed) for both modes; T1 regression against Cycle 1 behavior + audit guard that game/index.html is unmodified; T3 deterministic AI behavior (aim convergence, shooting, star evasion, 30s survivability soak with 0 deaths, fairness invariants, cross-run determinism) with one documented non-blocking soft-fail (AI didn't score on a target parked directly across the star from it -- expected per the design's deliberate no-gravity-lead-aim tradeoff, not a defect); T4 mode-select/navigation. One test-construction bug found and fixed during T3 authoring (arena screen-wrap made naive distance-to-star a misleading proxy after a long thrust run -- fixed by shortening the assertion window, not a game bug)."
     }
   ],
   "blockers": [],
-  "followUps": [],
+  "followUps": [
+    "Human/manual playtest of both Orbit Duel modes for feel/balance tuning (Cycle 1's physics constants AND Cycle 2's 12 AI constants) -- still open across two cycles now, not addressable by an unattended run.",
+    "T3.5 soft-fail: AI scored 0 against a target parked directly across the star in a 30s soak, consistent with the design's deliberate choice not to account for bullet-gravity curvature in AI aim. Consider a follow-up test (or minor tuning) against a target NOT shielded by the star to get a cleaner 'is it a real opponent' signal.",
+    "Consider exposing AI_REACTION_DELAY / AI_LEAD_FACTOR as an in-game difficulty selector (deliberately out of scope this cycle per docs/cycle2/design.md §7).",
+    "Consider AI vs AI or 3+ ship modes, sound, or persistent stats if this concept is revisited again (all deliberately out of scope this cycle)."
+  ],
   "priorCycles": [
     {
       "cycle": 1,
@@ -35,11 +46,18 @@
       "outputs": ["docs/concepts.md", "docs/design.md", "game/index.html", "docs/test-results.md"],
       "followUpsCarriedForward": [
         "Human/manual playtest of Orbit Duel for feel/balance tuning (SHIP_THRUST, SHIP_DRAG, G, BULLET_SPEED). -- still open, not addressable by an unattended run.",
-        "Automated end-to-end test of the win condition + restart flow. -- being addressed in Cycle 2 testing phase.",
-        "Consider a simple AI opponent or additional modes if this concept is revisited in a future cycle. -- being addressed in Cycle 2 (selected concept)."
+        "Automated end-to-end test of the win condition + restart flow. -- RESOLVED in Cycle 2 (docs/cycle2/test-results.md T2).",
+        "Consider a simple AI opponent or additional modes if this concept is revisited in a future cycle. -- RESOLVED in Cycle 2 (selected concept, Orbit Duel: AI Rival)."
       ]
+    },
+    {
+      "cycle": 2,
+      "selectedConcept": "Orbit Duel: AI Rival",
+      "status": "done",
+      "outputs": ["docs/cycle2/concepts.md", "docs/cycle2/design.md", "game/cycle2/index.html", "docs/cycle2/test-results.md", "tests/cycle2/*.js"],
+      "followUpsCarriedForward": "see top-level followUps above"
     }
   ],
-  "budgetNotes": "Cycle 1 completed fully within budget, no usage-limit warning encountered, single session no subagent fan-out. Cycle 2 research phase done in-session (Sonnet 5); design phase planned via a dedicated Opus 5 subagent per the standing task instructions.",
-  "resumeInstructions": "Cycle 2 research phase complete with valid output (docs/cycle2/concepts.md) -- do not re-execute it. Resume at 'design': produce docs/cycle2/design.md for 'Orbit Duel: AI Rival' (single-player AI opponent + mode-select screen, building on Cycle 1's game/index.html), then implement to game/cycle2/index.html (keep game/index.html from Cycle 1 untouched for audit), then test (extend the Playwright smoke tests plus the win-condition end-to-end test flagged in Cycle 1), checkpointing state.json after each phase."
+  "budgetNotes": "Cycle 1 completed fully within budget, no usage-limit warning encountered, single session no subagent fan-out. Cycle 2 completed fully within budget: research done in-session (Sonnet 5), design via a dedicated Opus 5 subagent, implementation + testing in-session (Sonnet 5). No usage-limit warning encountered during Cycle 2.",
+  "resumeInstructions": "Cycle 2 is complete (phase: done) with valid outputs at every checkpoint -- do not re-execute cycle 2's research/design/implementation/testing phases. On next invocation, start Cycle 3 at 'research': read docs/concepts.md and docs/cycle2/concepts.md for prior art (avoid re-proposing Orbit Duel/Orbit Duel: AI Rival/Gravity Flip Runner/Color Bind/Signal Weaver/Chrono Loop/Echo Maze/Stack Attack Lite/Tether Tag/Word Drift verbatim; a genuine evolution of one is fine) and consider addressing the 'followUps' list above (human playtest of Orbit Duel's two prototypes, AI difficulty tuning, Echo Maze as a fresh-concept runner-up from Cycle 2) as candidates. Use a docs/cycle3/ and game/cycle3/ (or a fresh top-level concept name) layout matching Cycle 2's, and keep prior cycles' outputs untouched for audit."
 }
