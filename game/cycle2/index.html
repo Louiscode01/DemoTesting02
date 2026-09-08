@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Orbit Duel: AI Rival</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #05060a;
+    color: #e8ecf4;
+    font-family: 'Courier New', Courier, monospace;
+    overflow: hidden;
+    height: 100%;
+  }
+  #wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+  }
+  canvas {
+    background: #05060a;
+    border: 1px solid #2a3040;
+    box-shadow: 0 0 40px rgba(80, 120, 255, 0.15);
+  }
+  #hint {
+    margin-top: 8px;
+    font-size: 12px;
+    color: #8b93a7;
+    text-align: center;
+    max-width: 900px;
+  }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="game" width="900" height="600"></canvas>
+  <div id="hint">Loading&hellip;</div>
+</div>
+<script>
+(function () {
+  'use strict';
+
+  // ---------- Tunable constants (Cycle 1 — unchanged, frozen) ----------
+  const G = 22000;
+  const STAR_MASS = 1;
+  const STAR_RADIUS = 18;
+  const GRAV_MIN_R = 40;          // clamp to avoid singularity blow-up near the star
+  const SHIP_RADIUS = 10;
+  const SHIP_THRUST = 260;
+  const SHIP_ROT_SPEED = 3.6;     // radians / sec
+  const SHIP_DRAG = 0.15;         // linear damping factor per second
+  const BULLET_SPEED = 340;
+  const BULLET_TTL = 3.2;         // seconds
+  const FIRE_COOLDOWN = 0.28;     // seconds
+  const WIN_SCORE = 5;
+  const RESPAWN_DELAY = 1.0;      // seconds
+
+  // ---------- AI tunables (Cycle 2) ----------
+  const AI_REACTION_DELAY   = 0.18;  // s between decision recomputes (higher = easier)
+  const AI_AIM_TOLERANCE    = 0.12;  // rad; deadband for "aimed enough" + rotation chatter
+  const AI_THRUST_TOLERANCE = 0.45;  // rad; heading error under which thrusting is useful
+  const AI_FIRE_COOLDOWN    = 0.34;  // s; AI-only floor, >= FIRE_COOLDOWN = handicap
+  const AI_FIRE_RANGE       = 420;   // px; don't waste shots across the arena
+  const AI_ENGAGE_RANGE     = 260;   // px; closer than this, stop closing and just shoot
+  const AI_STAR_DANGER_R    = 95;    // px from star center -> EVADE overrides everything
+  const AI_ORBIT_MIN        = 120;   // px; preferred standoff band, inner edge
+  const AI_ORBIT_MAX        = 260;   // px; preferred standoff band, outer edge
+  const AI_ORBIT_BIAS       = 0.6;   // 0..1 blend of radial correction into the tangent
+  const AI_LEAD_FACTOR      = 0.9;   // 0=no lead, 1=full first-order lead (<1 = beatable)
+  const AI_MAX_SPEED        = 210;   // px/s; above this the AI coasts instead of thrusting
+
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  const CENTER = { x: W / 2, y: H / 2 };
+
+  // ---------- Vector helpers ----------
+  const v = {
+    add: (a, b) => ({ x: a.x + b.x, y: a.y + b.y }),
+    sub: (a, b) => ({ x: a.x - b.x, y: a.y - b.y }),
+    scale: (a, s) => ({ x: a.x * s, y: a.y * s }),
+    len: (a) => Math.hypot(a.x, a.y),
+    norm: (a) => {
+      const l = Math.hypot(a.x, a.y) || 1;
+      return { x: a.x / l, y: a.y / l };
+    }
+  };
+
+  // normalize an angle to (-PI, PI]
+  function angleWrap(a) {
+    a = a % (Math.PI * 2);
+    if (a > Math.PI) a -= Math.PI * 2;
+    if (a <= -Math.PI) a += Math.PI * 2;
+    return a;
+  }
+
+  // ---------- Starfield (static, seeded) ----------
+  function seededRandom(seed) {
+    let s = seed;
+    return function () {
+      s = (s * 9301 + 49297) % 233280;
+      return s / 233280;
+    };
+  }
+  const rand = seededRandom(1337);
+  const stars = [];
+  for (let i = 0; i < 140; i++) {
+    stars.push({
+      x: rand() * W,
+      y: rand() * H,
+      r: rand() * 1.4 + 0.3,
+      a: rand() * 0.6 + 0.3
+    });
+  }
+
+  // ---------- Entities ----------
+  function makeShip(id, color, spawn, angle, keys) {
+    return {
+      id, color, keys,
+      controller: 'human',            // 'human' | 'ai'
+      pos: { ...spawn },
+      vel: { x: 0, y: 0 },
+      angle,
+      alive: true,
+      respawnAt: 0,
+      cooldown: 0,
+      thrusting: false,
+      score: 0,
+      intent: { left: false, right: false, thrust: false, fire: false },
+      ai: { mode: 'orbit', timer: 0, desiredAngle: angle, fireTimer: 0 }
+    };
+  }
+
+  const SPAWN_P1 = { x: W * 0.22, y: H * 0.5 };
+  const SPAWN_P2 = { x: W * 0.78, y: H * 0.5 };
+
+  const players = [
+    makeShip('P1', '#4ec9ff', SPAWN_P1, 0, {
+      left: 'KeyA', right: 'KeyD', thrust: 'KeyW', fire: 'Space'
+    }),
+    makeShip('P2', '#ff5d73', SPAWN_P2, Math.PI, {
+      left: 'ArrowLeft', right: 'ArrowRight', thrust: 'ArrowUp', fire: 'Enter'
+    })
+  ];
+
+  function otherShip(ship) {
+    return players.find(p => p.id !== ship.id);
+  }
+
+  let bullets = [];
+  let particles = [];
+  let phase = 'menu';       // 'menu' | 'playing' | 'gameover'
+  let mode = null;          // '1p' | '2p'
+  let winner = null;
+  let menuHighlight = '1p'; // '1p' | '2p'
+  let paused = false;       // test-only: suspends rAF-driven stepping
+
+  const hintEl = document.getElementById('hint');
+  function updateHint() {
+    if (phase === 'menu') {
+      hintEl.textContent =
+        'Select a mode: press 1 for 1P vs AI, 2 for 2P local, or use arrows/W,S + Enter.';
+    } else if (mode === '1p') {
+      hintEl.textContent =
+        'Player 1: A/D rotate, W thrust, Space fire | P2 is AI-controlled | ' +
+        'R to restart after a win, Esc for menu. First to ' + WIN_SCORE + ' kills wins.';
+    } else {
+      hintEl.textContent =
+        'Player 1: A/D rotate, W thrust, Space fire | ' +
+        'Player 2: Left/Right rotate, Up thrust, Enter fire | ' +
+        'R to restart after a win, Esc for menu. First to ' + WIN_SCORE + ' kills wins.';
+    }
+  }
+
+  // ---------- Input ----------
+  const keysDown = new Set();
+  window.addEventListener('keydown', (e) => {
+    keysDown.add(e.code);
+    if (['Space', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Enter'].includes(e.code)) {
+      e.preventDefault();
+    }
+
+    if (phase === 'menu') {
+      if (e.code === 'Digit1' || e.code === 'Numpad1') {
+        startMatch('1p');
+      } else if (e.code === 'Digit2' || e.code === 'Numpad2') {
+        startMatch('2p');
+      } else if (['ArrowUp', 'ArrowDown', 'KeyW', 'KeyS'].includes(e.code)) {
+        menuHighlight = menuHighlight === '1p' ? '2p' : '1p';
+      } else if (e.code === 'Enter' || e.code === 'Space') {
+        startMatch(menuHighlight);
+      }
+    } else if (phase === 'playing') {
+      if (e.code === 'Escape' || e.code === 'KeyM') toMenu();
+    } else if (phase === 'gameover') {
+      if (e.code === 'KeyR') startMatch(mode);
+      else if (e.code === 'Escape' || e.code === 'KeyM') toMenu();
+    }
+  }, { passive: false });
+  window.addEventListener('keyup', (e) => keysDown.delete(e.code));
+
+  function readHumanIntent(ship) {
+    const k = ship.keys;
+    ship.intent.left = keysDown.has(k.left);
+    ship.intent.right = keysDown.has(k.right);
+    ship.intent.thrust = keysDown.has(k.thrust);
+    ship.intent.fire = keysDown.has(k.fire);
+  }
+
+  function resetShip(ship) {
+    const spawn = ship.id === 'P1' ? SPAWN_P1 : SPAWN_P2;
+    ship.pos = { ...spawn };
+    ship.vel = { x: 0, y: 0 };
+    ship.angle = ship.id === 'P1' ? 0 : Math.PI;
+    ship.alive = true;
+    ship.respawnAt = 0;
+    ship.cooldown = 0;
+    ship.thrusting = false;
+    ship.score = 0;
+    ship.intent = { left: false, right: false, thrust: false, fire: false };
+    ship.ai = { mode: 'orbit', timer: 0, desiredAngle: ship.angle, fireTimer: 0 };
+  }
+
+  function startMatch(m) {
+    mode = m;
+    players[0].controller = 'human';
+    players[1].controller = (m === '1p') ? 'ai' : 'human';
+    players.forEach(resetShip);
+    bullets = [];
+    particles = [];
+    winner = null;
+    phase = 'playing';
+    updateHint();
+  }
+
+  function toMenu() {
+    phase = 'menu';
+    mode = null;
+    winner = null;
+    players.forEach(resetShip);
+    bullets = [];
+    particles = [];
+    updateHint();
+  }
+
+  updateHint();
+
+  // ---------- Physics ----------
+  function gravityAccel(pos) {
+    const toStar = v.sub(CENTER, pos);
+    const r = Math.max(v.len(toStar), GRAV_MIN_R);
+    const dir = v.norm(toStar);
+    const mag = (G * STAR_MASS) / (r * r);
+    return v.scale(dir, mag);
+  }
+
+  function wrap(pos) {
+    if (pos.x < 0) pos.x += W;
+    if (pos.x > W) pos.x -= W;
+    if (pos.y < 0) pos.y += H;
+    if (pos.y > H) pos.y -= H;
+  }
+
+  function spawnExplosion(pos, color) {
+    for (let i = 0; i < 18; i++) {
+      const ang = Math.random() * Math.PI * 2;
+      const speed = 40 + Math.random() * 120;
+      particles.push({
+        pos: { ...pos },
+        vel: { x: Math.cos(ang) * speed, y: Math.sin(ang) * speed },
+        life: 0.5 + Math.random() * 0.4,
+        color
+      });
+    }
+  }
+
+  function respawnShip(ship, now) {
+    ship.pos = { ...(ship.id === 'P1' ? SPAWN_P1 : SPAWN_P2) };
+    ship.vel = { x: 0, y: 0 };
+    ship.angle = ship.id === 'P1' ? 0 : Math.PI;
+    ship.alive = true;
+  }
+
+  // The single scoring path — also called directly by the test hook, so the
+  // win-condition E2E test exercises real scoring/win-detection, not a re-implementation.
+  function registerHit(shooter, victim, now) {
+    spawnExplosion(victim.pos, victim.color);
+    victim.alive = false;
+    victim.respawnAt = now + RESPAWN_DELAY;
+    shooter.score += 1;
+    if (shooter.score >= WIN_SCORE) {
+      phase = 'gameover';
+      winner = shooter.id;
+    }
+  }
+
+  // ---------- AI ----------
+  // Deterministic priority-arbitrated steering: EVADE > ORBIT > ENGAGE.
+  // Reads self/target state and constants; writes self.intent + self.ai only.
+  // No RNG, no wall-clock — same inputs always produce the same outputs.
+  function updateAI(self, target, dt, now) {
+    const radial = v.sub(self.pos, CENTER); // outward from star
+    const r = v.len(radial);
+    const toTarget = v.sub(target.pos, self.pos);
+    const d = v.len(toTarget);
+
+    self.ai.timer -= dt;
+
+    if (r < AI_STAR_DANGER_R) {
+      // Priority 1 — EVADE. Checked every tick, bypassing the reaction latch:
+      // survival is not a difficulty knob.
+      self.ai.mode = 'evade';
+      self.ai.desiredAngle = Math.atan2(radial.y, radial.x);
+    } else if (self.ai.timer <= 0) {
+      self.ai.timer = AI_REACTION_DELAY;
+      if (r < AI_ORBIT_MIN || r > AI_ORBIT_MAX || !target.alive) {
+        // Priority 2 — ORBIT. Tangent to the star, biased radially back into the band.
+        self.ai.mode = 'orbit';
+        const radialNorm = v.norm(radial);
+        let tangent = { x: -radialNorm.y, y: radialNorm.x };
+        const cross = radial.x * self.vel.y - radial.y * self.vel.x;
+        if (cross < 0) tangent = { x: -tangent.x, y: -tangent.y };
+        const radialDir = r < AI_ORBIT_MIN ? radialNorm : v.scale(radialNorm, -1);
+        const blended = v.add(tangent, v.scale(radialDir, AI_ORBIT_BIAS));
+        self.ai.desiredAngle = Math.atan2(blended.y, blended.x);
+      } else {
+        // Priority 3 — ENGAGE. First-order lead aim (deliberately ignores bullet
+        // gravity curvature — see docs/cycle2/design.md §3.2).
+        self.ai.mode = 'engage';
+        const tof = d / BULLET_SPEED;
+        const aimPt = v.add(target.pos, v.scale(target.vel, tof * AI_LEAD_FACTOR));
+        const toAim = v.sub(aimPt, self.pos);
+        self.ai.desiredAngle = Math.atan2(toAim.y, toAim.x);
+      }
+    }
+
+    const err = angleWrap(self.ai.desiredAngle - self.angle);
+    self.intent.left = err < -AI_AIM_TOLERANCE;
+    self.intent.right = err > AI_AIM_TOLERANCE;
+
+    const withinThrustTol = Math.abs(err) <= AI_THRUST_TOLERANCE;
+    const speed = v.len(self.vel);
+    let wantThrust = false;
+    if (self.ai.mode === 'evade') {
+      wantThrust = withinThrustTol;
+    } else if (self.ai.mode === 'orbit') {
+      wantThrust = withinThrustTol && speed < AI_MAX_SPEED;
+    } else {
+      wantThrust = d > AI_ENGAGE_RANGE && withinThrustTol && speed < AI_MAX_SPEED;
+    }
+    self.intent.thrust = wantThrust;
+
+    self.ai.fireTimer -= dt;
+    const withinAimTol = Math.abs(err) <= AI_AIM_TOLERANCE;
+    const canFire = withinAimTol && d <= AI_FIRE_RANGE && self.cooldown <= 0 &&
+      self.ai.fireTimer <= 0 && self.ai.mode !== 'evade' && target.alive;
+    self.intent.fire = canFire;
+    if (canFire) self.ai.fireTimer = AI_FIRE_COOLDOWN;
+  }
+
+  function step(dt, now) {
+    if (phase !== 'playing') return;
+
+    // Phase A — fill intents from whichever controller owns each ship.
+    for (const ship of players) {
+      if (!ship.alive) continue;
+      if (ship.controller === 'human') readHumanIntent(ship);
+      else updateAI(ship, otherShip(ship), dt, now);
+    }
+
+    // Phase B — apply intents. Physics is unchanged from Cycle 1 apart from
+    // reading `ship.intent` instead of `keysDown` directly.
+    for (const ship of players) {
+      if (!ship.alive) {
+        if (now >= ship.respawnAt) respawnShip(ship, now);
+        continue;
+      }
+
+      if (ship.intent.left) ship.angle -= SHIP_ROT_SPEED * dt;
+      if (ship.intent.right) ship.angle += SHIP_ROT_SPEED * dt;
+
+      ship.thrusting = ship.intent.thrust;
+      if (ship.thrusting) {
+        const thrustVec = { x: Math.cos(ship.angle), y: Math.sin(ship.angle) };
+        ship.vel = v.add(ship.vel, v.scale(thrustVec, SHIP_THRUST * dt));
+      }
+
+      // gravity
+      ship.vel = v.add(ship.vel, v.scale(gravityAccel(ship.pos), dt));
+      // drag
+      ship.vel = v.scale(ship.vel, Math.max(0, 1 - SHIP_DRAG * dt));
+      // integrate
+      ship.pos = v.add(ship.pos, v.scale(ship.vel, dt));
+      wrap(ship.pos);
+
+      // star collision
+      if (v.len(v.sub(ship.pos, CENTER)) < STAR_RADIUS + SHIP_RADIUS) {
+        spawnExplosion(ship.pos, ship.color);
+        ship.alive = false;
+        ship.respawnAt = now + RESPAWN_DELAY;
+        continue;
+      }
+
+      // firing
+      ship.cooldown -= dt;
+      if (ship.intent.fire && ship.cooldown <= 0) {
+        ship.cooldown = FIRE_COOLDOWN;
+        const dir = { x: Math.cos(ship.angle), y: Math.sin(ship.angle) };
+        bullets.push({
+          pos: v.add(ship.pos, v.scale(dir, SHIP_RADIUS + 4)),
+          vel: v.add(ship.vel, v.scale(dir, BULLET_SPEED)),
+          ttl: BULLET_TTL,
+          owner: ship.id,
+          color: ship.color
+        });
+      }
+    }
+
+    // bullets
+    for (const b of bullets) {
+      b.vel = v.add(b.vel, v.scale(gravityAccel(b.pos), dt));
+      b.pos = v.add(b.pos, v.scale(b.vel, dt));
+      wrap(b.pos);
+      b.ttl -= dt;
+
+      if (v.len(v.sub(b.pos, CENTER)) < STAR_RADIUS) {
+        b.ttl = 0; // absorbed by star
+      }
+    }
+
+    // bullet-ship collisions
+    for (const b of bullets) {
+      if (b.ttl <= 0) continue;
+      for (const ship of players) {
+        if (!ship.alive || ship.id === b.owner) continue;
+        if (v.len(v.sub(b.pos, ship.pos)) < SHIP_RADIUS + 2) {
+          b.ttl = 0;
+          const shooter = players.find(p => p.id === b.owner);
+          if (shooter) registerHit(shooter, ship, now);
+        }
+      }
+    }
+    bullets = bullets.filter(b => b.ttl > 0);
+
+    // particles
+    for (const p of particles) {
+      p.pos = v.add(p.pos, v.scale(p.vel, dt));
+      p.life -= dt;
+    }
+    particles = particles.filter(p => p.life > 0);
+  }
+
+  // ---------- Render ----------
+  function drawStarfield() {
+    ctx.fillStyle = '#05060a';
+    ctx.fillRect(0, 0, W, H);
+    for (const s of stars) {
+      ctx.globalAlpha = s.a;
+      ctx.fillStyle = '#cfe0ff';
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function drawStar() {
+    const grad = ctx.createRadialGradient(CENTER.x, CENTER.y, 0, CENTER.x, CENTER.y, STAR_RADIUS * 4);
+    grad.addColorStop(0, 'rgba(255, 220, 140, 0.9)');
+    grad.addColorStop(0.3, 'rgba(255, 180, 80, 0.35)');
+    grad.addColorStop(1, 'rgba(255, 180, 80, 0)');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(CENTER.x, CENTER.y, STAR_RADIUS * 4, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = '#ffdc8c';
+    ctx.beginPath();
+    ctx.arc(CENTER.x, CENTER.y, STAR_RADIUS, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  function drawShip(ship) {
+    if (!ship.alive) return;
+    ctx.save();
+    ctx.translate(ship.pos.x, ship.pos.y);
+    ctx.rotate(ship.angle);
+
+    if (ship.thrusting) {
+      ctx.fillStyle = 'rgba(255,150,60,0.9)';
+      ctx.beginPath();
+      ctx.moveTo(-SHIP_RADIUS, 0);
+      ctx.lineTo(-SHIP_RADIUS - 10 - Math.random() * 6, 0);
+      ctx.lineTo(-SHIP_RADIUS, 5);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    ctx.fillStyle = ship.color;
+    ctx.beginPath();
+    ctx.moveTo(SHIP_RADIUS, 0);
+    ctx.lineTo(-SHIP_RADIUS * 0.8, SHIP_RADIUS * 0.7);
+    ctx.lineTo(-SHIP_RADIUS * 0.4, 0);
+    ctx.lineTo(-SHIP_RADIUS * 0.8, -SHIP_RADIUS * 0.7);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function drawBullets() {
+    for (const b of bullets) {
+      ctx.fillStyle = b.color;
+      ctx.beginPath();
+      ctx.arc(b.pos.x, b.pos.y, 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  function drawParticles() {
+    for (const p of particles) {
+      ctx.globalAlpha = Math.max(0, p.life);
+      ctx.fillStyle = p.color;
+      ctx.beginPath();
+      ctx.arc(p.pos.x, p.pos.y, 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function drawHUD() {
+    ctx.font = '20px "Courier New", monospace';
+    ctx.fillStyle = players[0].color;
+    ctx.fillText('P1: ' + players[0].score, 20, 30);
+    ctx.fillStyle = players[1].color;
+    ctx.textAlign = 'right';
+    ctx.fillText((mode === '1p' ? 'AI: ' : 'P2: ') + players[1].score, W - 20, 30);
+    ctx.textAlign = 'left';
+
+    if (phase === 'gameover') {
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.fillRect(0, 0, W, H);
+      ctx.textAlign = 'center';
+      ctx.fillStyle = winner === 'P1' ? players[0].color : players[1].color;
+      ctx.font = '42px "Courier New", monospace';
+      const label = (mode === '1p' && winner === 'P2') ? 'AI WINS' : winner + ' WINS';
+      ctx.fillText(label, W / 2, H / 2 - 10);
+      ctx.fillStyle = '#e8ecf4';
+      ctx.font = '18px "Courier New", monospace';
+      ctx.fillText('Press R to restart, Esc for menu', W / 2, H / 2 + 26);
+      ctx.textAlign = 'left';
+    }
+  }
+
+  function drawMenu() {
+    ctx.textAlign = 'center';
+
+    ctx.fillStyle = '#e8ecf4';
+    ctx.font = '48px "Courier New", monospace';
+    ctx.fillText('ORBIT DUEL', W / 2, H / 2 - 90);
+
+    ctx.fillStyle = '#8b93a7';
+    ctx.font = '20px "Courier New", monospace';
+    ctx.fillText('AI RIVAL', W / 2, H / 2 - 55);
+
+    ctx.font = '26px "Courier New", monospace';
+    ctx.fillStyle = menuHighlight === '1p' ? players[0].color : '#5a6478';
+    ctx.fillText((menuHighlight === '1p' ? '>  ' : '   ') + '[1]  1P  vs  AI', W / 2, H / 2);
+    ctx.fillStyle = menuHighlight === '2p' ? players[0].color : '#5a6478';
+    ctx.fillText((menuHighlight === '2p' ? '>  ' : '   ') + '[2]  2P  LOCAL', W / 2, H / 2 + 40);
+
+    ctx.fillStyle = '#8b93a7';
+    ctx.font = '14px "Courier New", monospace';
+    ctx.fillText('Arrow keys / W,S to choose, Enter to confirm — or press 1 / 2 directly', W / 2, H / 2 + 90);
+
+    ctx.textAlign = 'left';
+  }
+
+  function render() {
+    drawStarfield();
+    drawStar();
+    if (phase === 'menu') {
+      drawMenu();
+    } else {
+      drawBullets();
+      drawParticles();
+      for (const ship of players) drawShip(ship);
+      drawHUD();
+    }
+  }
+
+  // ---------- Main loop ----------
+  let lastTime = performance.now();
+  function frame(now) {
+    if (paused) {
+      lastTime = now;
+      requestAnimationFrame(frame);
+      return;
+    }
+    const dt = Math.min((now - lastTime) / 1000, 1 / 30); // clamp to avoid spiral of death
+    lastTime = now;
+    step(dt, now / 1000);
+    render();
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  // Expose hooks for automated testing.
+  // NOTE (carried from Cycle 1): anything reassigned by .filter()/state-machine logic
+  // (bullets, particles) must be exposed as a live getter, never an object-literal
+  // snapshot, or the exposed reference goes stale after the first frame.
+  window.__orbitDuel = {
+    players,
+    get bullets() { return bullets; },
+    get particles() { return particles; },
+    get phase() { return phase; },
+    get mode() { return mode; },
+    get winner() { return winner; },
+    get gameOver() { return phase === 'gameover'; }, // Cycle 1 compatibility
+    constants: {
+      WIN_SCORE, FIRE_COOLDOWN, RESPAWN_DELAY, STAR_RADIUS, SHIP_RADIUS,
+      AI_REACTION_DELAY, AI_AIM_TOLERANCE, AI_THRUST_TOLERANCE, AI_FIRE_COOLDOWN,
+      AI_FIRE_RANGE, AI_ENGAGE_RANGE, AI_STAR_DANGER_R, AI_ORBIT_MIN, AI_ORBIT_MAX,
+      AI_ORBIT_BIAS, AI_LEAD_FACTOR, AI_MAX_SPEED
+    },
+    test: {
+      setPaused(p) { paused = p; },
+      step(dt, now) { step(dt, now); render(); },
+      updateAI(self, target, dt, now) { updateAI(self, target, dt, now); },
+      registerHit(shooterId, victimId, now) {
+        const shooter = players.find(p => p.id === shooterId);
+        const victim = players.find(p => p.id === victimId);
+        if (shooter && victim) registerHit(shooter, victim, now);
+      },
+      startMatch(m) { startMatch(m); },
+      toMenu() { toMenu(); }
+    }
+  };
+})();
+</script>
+</body>
+</html>

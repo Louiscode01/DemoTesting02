@@ -1,9 +1,9 @@
 {
   "cycle": 2,
   "cycleStarted": "2026-09-08T00:00:00Z",
-  "lastUpdated": "2026-09-08T00:35:00Z",
-  "phase": "design",
-  "nextPhase": "implementation",
+  "lastUpdated": "2026-09-08T00:55:00Z",
+  "phase": "implementation",
+  "nextPhase": "testing",
   "selectedConcept": "Orbit Duel: AI Rival",
   "checkpoints": [
     {
@@ -17,6 +17,12 @@
       "completedAt": "2026-09-08T00:35:00Z",
       "outputs": ["docs/cycle2/design.md"],
       "notes": "Produced via a dedicated Opus 5 subagent. Key decisions: intent-layer indirection (ship.intent booleans) so AI and human inputs share one physics path; phase state machine (menu/playing/gameover) replacing Cycle 1's boolean gameOver, with a backward-compatible getter; deterministic priority-arbitrated AI (evade > orbit > engage) with a reaction-delay latch as the difficulty knob; registerHit() extracted as the single scoring path so the win-condition E2E test exercises real logic; 12 new AI tunables with documented invariants; implementation ordered so the win-condition test (Cycle 1's top follow-up) is written before AI polish. Target file game/cycle2/index.html; game/index.html stays frozen."
+    },
+    {
+      "phase": "implementation",
+      "completedAt": "2026-09-08T00:55:00Z",
+      "outputs": ["game/cycle2/index.html"],
+      "notes": "Self-contained playable prototype per docs/cycle2/design.md: intent layer, menu/playing/gameover state machine, mode-select screen (1P vs AI / 2P local), deterministic priority-arbitrated AI (evade/orbit/engage), registerHit() extracted as the single scoring path, full window.__orbitDuel.test hook surface (setPaused/step/updateAI/registerHit/startMatch/toMenu). Verified game/index.html (Cycle 1) is byte-for-byte unchanged (git diff --quiet passes)."
     }
   ],
   "blockers": [],
