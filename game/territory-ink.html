@@ -1,0 +1,457 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Territory Ink</title>
+<style>
+  :root {
+    --bg: #10141c;
+    --panel: #171d29;
+    --line: #232b3a;
+    --text: #e7ecf5;
+    --muted: #8a93a6;
+    --p1: #3aa0ff;
+    --p2: #ff5a3a;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+  }
+  h1 { font-size: 20px; margin: 16px 0 4px; letter-spacing: 0.02em; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 12px; text-align: center; }
+  .sub b { color: var(--text); }
+  .hud {
+    display: flex;
+    justify-content: space-between;
+    width: 792px;
+    max-width: 96vw;
+    padding: 8px 12px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 8px 8px 0 0;
+    font-size: 14px;
+  }
+  .hud .p1 { color: var(--p1); }
+  .hud .p2 { color: var(--p2); }
+  .hearts { letter-spacing: 2px; }
+  .stage {
+    position: relative;
+    width: 792px;
+    max-width: 96vw;
+  }
+  canvas {
+    display: block;
+    width: 100%;
+    height: auto;
+    background: #0b0e14;
+    border: 1px solid var(--line);
+    border-top: none;
+    border-radius: 0 0 8px 8px;
+  }
+  .overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: rgba(10, 12, 18, 0.82);
+    border-radius: 0 0 8px 8px;
+    font-size: 28px;
+    font-weight: 700;
+    gap: 10px;
+  }
+  .overlay .hint { font-size: 14px; font-weight: 400; color: var(--muted); }
+  .overlay[hidden] { display: none; }
+  footer { color: var(--muted); font-size: 12px; margin: 14px 0 24px; text-align: center; }
+</style>
+</head>
+<body>
+<h1>Territory Ink</h1>
+<p class="sub">
+  <b style="color:var(--p1)">P1</b>: WASD &nbsp;|&nbsp;
+  <b style="color:var(--p2)">P2</b>: Arrow Keys &nbsp;|&nbsp;
+  Loop back into your own territory to claim enclosed ground.
+  Cross an enemy trail to cut it; crossing your own trail or the wall costs you a life.
+  Press <b>R</b> to restart.
+</p>
+<div class="hud">
+  <div class="p1">P1 <span class="hearts" id="p1hearts"></span></div>
+  <div class="p2">P2 <span class="hearts" id="p2hearts"></span></div>
+</div>
+<div class="stage">
+  <canvas id="game" width="792" height="540"></canvas>
+  <div class="overlay" id="overlay" hidden>
+    <div id="overlayText"></div>
+    <div class="hint">Press R to restart</div>
+  </div>
+</div>
+<footer>Territory Ink &mdash; Cycle 2 prototype. Single self-contained file, no build step.</footer>
+
+<script>
+(function () {
+  "use strict";
+
+  // ---------- Constants ----------
+  const COLS = 44, ROWS = 30, CELL = 18;
+  const TICK_MS = 110;
+  const RESPAWN_TICKS = Math.round(1000 / TICK_MS); // ~1s
+  const START_LIVES = 3;
+  const BASE = 4; // base square size
+
+  const EMPTY = 0, P1_TERR = 1, P2_TERR = 2, P1_TRAIL = 3, P2_TRAIL = 4;
+
+  const DIRS4 = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+  const DIR = {
+    up: { dr: -1, dc: 0 }, down: { dr: 1, dc: 0 },
+    left: { dr: 0, dc: -1 }, right: { dr: 0, dc: 1 },
+  };
+  function isOpposite(a, b) {
+    return a && b && a.dr === -b.dr && a.dc === -b.dc;
+  }
+  function key(r, c) { return r * COLS + c; }
+
+  // ---------- State ----------
+  let board; // 2D array [ROWS][COLS]
+  let tickCount = 0;
+  let gameOver = false;
+  let winner = null; // player object or null
+  let p1, p2;
+
+  function makeBoard() {
+    const b = [];
+    for (let r = 0; r < ROWS; r++) b.push(new Array(COLS).fill(EMPTY));
+    return b;
+  }
+
+  function makePlayer(id, territoryValue, trailValue, baseRowStart, baseColStart, headRow, headCol, dir, color) {
+    return {
+      id, territoryValue, trailValue,
+      baseRowStart, baseColStart,
+      baseHeadRow: headRow, baseHeadCol: headCol, baseDir: dir,
+      headRow, headCol, dir: { ...dir }, queuedDir: null,
+      trail: [], trailSet: new Set(),
+      lives: START_LIVES, alive: true, respawnAt: null,
+      color,
+    };
+  }
+
+  function other(p) { return p === p1 ? p2 : p1; }
+
+  function stampBase(p) {
+    for (let r = p.baseRowStart; r < p.baseRowStart + BASE; r++) {
+      for (let c = p.baseColStart; c < p.baseColStart + BASE; c++) {
+        board[r][c] = p.territoryValue;
+      }
+    }
+  }
+
+  function resetGame() {
+    board = makeBoard();
+    tickCount = 0;
+    gameOver = false;
+    winner = null;
+
+    p1 = makePlayer(0, P1_TERR, P1_TRAIL, 0, 0, 1, 2, DIR.right, "#3aa0ff");
+    p2 = makePlayer(1, P2_TERR, P2_TRAIL, ROWS - BASE, COLS - BASE,
+      ROWS - 2, COLS - 3, DIR.left, "#ff5a3a");
+
+    stampBase(p1);
+    stampBase(p2);
+
+    hideOverlay();
+    updateHUD();
+  }
+
+  function die(p) {
+    p.trail.forEach(({ r, c }) => { board[r][c] = EMPTY; });
+    p.trail = [];
+    p.trailSet.clear();
+    p.alive = false;
+    p.lives -= 1;
+    if (p.lives <= 0) {
+      endGame(other(p));
+    } else {
+      p.respawnAt = tickCount + RESPAWN_TICKS;
+    }
+  }
+
+  function respawnPlayer(p) {
+    p.headRow = p.baseHeadRow;
+    p.headCol = p.baseHeadCol;
+    p.dir = { ...p.baseDir };
+    p.queuedDir = null;
+    p.alive = true;
+    p.respawnAt = null;
+  }
+
+  function endGame(winningPlayer) {
+    gameOver = true;
+    winner = winningPlayer;
+    showOverlay(`P${winningPlayer.id + 1} WINS`);
+  }
+
+  function captureTerritory(p) {
+    p.trail.forEach(({ r, c }) => { board[r][c] = p.territoryValue; });
+
+    const outside = new Uint8Array(ROWS * COLS);
+    const stack = [];
+    function seed(r, c) {
+      if (board[r][c] === EMPTY && !outside[key(r, c)]) {
+        outside[key(r, c)] = 1;
+        stack.push([r, c]);
+      }
+    }
+    for (let c = 0; c < COLS; c++) { seed(0, c); seed(ROWS - 1, c); }
+    for (let r = 0; r < ROWS; r++) { seed(r, 0); seed(r, COLS - 1); }
+
+    while (stack.length) {
+      const [r, c] = stack.pop();
+      for (const [dr, dc] of DIRS4) {
+        const nr = r + dr, nc = c + dc;
+        if (nr < 0 || nr >= ROWS || nc < 0 || nc >= COLS) continue;
+        const idx = key(nr, nc);
+        if (board[nr][nc] === EMPTY && !outside[idx]) {
+          outside[idx] = 1;
+          stack.push([nr, nc]);
+        }
+      }
+    }
+
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        if (board[r][c] === EMPTY && !outside[key(r, c)]) {
+          board[r][c] = p.territoryValue;
+        }
+      }
+    }
+
+    p.trail = [];
+    p.trailSet.clear();
+  }
+
+  function tick() {
+    if (gameOver) return;
+    tickCount++;
+
+    [p1, p2].forEach((p) => {
+      if (!p.alive && p.respawnAt !== null && tickCount >= p.respawnAt) {
+        respawnPlayer(p);
+      }
+    });
+
+    const active = [p1, p2].filter((p) => p.alive);
+    if (active.length === 0) return;
+
+    active.forEach((p) => {
+      if (p.queuedDir && !isOpposite(p.queuedDir, p.dir)) {
+        p.dir = p.queuedDir;
+      }
+      p._nr = p.headRow + p.dir.dr;
+      p._nc = p.headCol + p.dir.dc;
+    });
+
+    const deaths = new Set();
+
+    // 1. bounds
+    active.forEach((p) => {
+      if (p._nr < 0 || p._nr >= ROWS || p._nc < 0 || p._nc >= COLS) deaths.add(p);
+    });
+
+    // 2. head-on collision
+    if (active.length === 2) {
+      const [a, b] = active;
+      if (!deaths.has(a) && !deaths.has(b) && a._nr === b._nr && a._nc === b._nc) {
+        deaths.add(a);
+        deaths.add(b);
+      }
+    }
+
+    // 3. self-crash (moving onto own trail)
+    active.forEach((p) => {
+      if (deaths.has(p)) return;
+      if (p.trailSet.has(key(p._nr, p._nc))) deaths.add(p);
+    });
+
+    // 4. opponent trail cut (mover is unaffected; trail owner dies)
+    active.forEach((p) => {
+      if (deaths.has(p)) return;
+      const opp = other(p);
+      if (opp.alive && !deaths.has(opp) && opp.trailSet.has(key(p._nr, p._nc))) {
+        deaths.add(opp);
+      }
+    });
+
+    // Apply deaths first (reverts trails to EMPTY), then movement for survivors,
+    // so a cut opponent's vacated cell is EMPTY by the time the mover claims it.
+    deaths.forEach((p) => die(p));
+
+    active.forEach((p) => {
+      if (deaths.has(p)) return; // died this tick, position frozen until respawn
+      const nr = p._nr, nc = p._nc;
+      if (board[nr][nc] === p.territoryValue) {
+        if (p.trail.length > 0) captureTerritory(p);
+      } else {
+        board[nr][nc] = p.trailValue;
+        p.trail.push({ r: nr, c: nc });
+        p.trailSet.add(key(nr, nc));
+      }
+      p.headRow = nr;
+      p.headCol = nc;
+    });
+
+    updateHUD();
+  }
+
+  // ---------- Rendering ----------
+  const canvas = document.getElementById("game");
+  const ctx = canvas.getContext("2d");
+
+  function cellColor(v) {
+    switch (v) {
+      case P1_TERR: return "rgba(58,160,255,0.25)";
+      case P2_TERR: return "rgba(255,90,58,0.25)";
+      case P1_TRAIL: return "rgba(58,160,255,0.85)";
+      case P2_TRAIL: return "rgba(255,90,58,0.85)";
+      default: return null;
+    }
+  }
+
+  function render() {
+    ctx.fillStyle = "#0b0e14";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        const col = cellColor(board[r][c]);
+        if (col) {
+          ctx.fillStyle = col;
+          ctx.fillRect(c * CELL, r * CELL, CELL, CELL);
+        }
+      }
+    }
+
+    ctx.strokeStyle = "rgba(255,255,255,0.04)";
+    ctx.lineWidth = 1;
+    for (let c = 0; c <= COLS; c++) {
+      ctx.beginPath();
+      ctx.moveTo(c * CELL + 0.5, 0);
+      ctx.lineTo(c * CELL + 0.5, ROWS * CELL);
+      ctx.stroke();
+    }
+    for (let r = 0; r <= ROWS; r++) {
+      ctx.beginPath();
+      ctx.moveTo(0, r * CELL + 0.5);
+      ctx.lineTo(COLS * CELL, r * CELL + 0.5);
+      ctx.stroke();
+    }
+
+    [p1, p2].forEach((p) => {
+      if (!p.alive) return;
+      ctx.fillStyle = p.color;
+      ctx.fillRect(p.headCol * CELL + 2, p.headRow * CELL + 2, CELL - 4, CELL - 4);
+      ctx.strokeStyle = "#fff";
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(p.headCol * CELL + 2, p.headRow * CELL + 2, CELL - 4, CELL - 4);
+    });
+  }
+
+  function updateHUD() {
+    document.getElementById("p1hearts").textContent = "♥".repeat(Math.max(0, p1.lives)) +
+      "♡".repeat(Math.max(0, START_LIVES - p1.lives));
+    document.getElementById("p2hearts").textContent = "♥".repeat(Math.max(0, p2.lives)) +
+      "♡".repeat(Math.max(0, START_LIVES - p2.lives));
+  }
+
+  function showOverlay(text) {
+    document.getElementById("overlayText").textContent = text;
+    document.getElementById("overlay").hidden = false;
+  }
+  function hideOverlay() {
+    document.getElementById("overlay").hidden = true;
+  }
+
+  // ---------- Input ----------
+  const KEYMAP = {
+    w: ["p1", "up"], a: ["p1", "left"], s: ["p1", "down"], d: ["p1", "right"],
+    arrowup: ["p2", "up"], arrowleft: ["p2", "left"],
+    arrowdown: ["p2", "down"], arrowright: ["p2", "right"],
+  };
+
+  window.addEventListener("keydown", (e) => {
+    const k = e.key.toLowerCase();
+    if (k === "r") {
+      resetGame();
+      return;
+    }
+    const mapping = KEYMAP[k];
+    if (!mapping) return;
+    e.preventDefault();
+    const [who, dirName] = mapping;
+    const p = who === "p1" ? p1 : p2;
+    p.queuedDir = DIR[dirName];
+  });
+
+  // ---------- Main loop ----------
+  let lastTime = null;
+  let acc = 0;
+  function frame(t) {
+    if (lastTime === null) lastTime = t;
+    acc += t - lastTime;
+    lastTime = t;
+    let steps = 0;
+    while (acc >= TICK_MS && steps < 8) {
+      tick();
+      acc -= TICK_MS;
+      steps++;
+    }
+    render();
+    requestAnimationFrame(frame);
+  }
+
+  // ---------- Test hook ----------
+  function serializePlayer(p) {
+    return {
+      id: p.id,
+      headRow: p.headRow,
+      headCol: p.headCol,
+      dir: { ...p.dir },
+      lives: p.lives,
+      alive: p.alive,
+      trailLength: p.trail.length,
+    };
+  }
+
+  window.__territoryInk = {
+    get board() { return board.map((row) => row.slice()); },
+    get players() { return [serializePlayer(p1), serializePlayer(p2)]; },
+    get gameOver() { return gameOver; },
+    get winner() { return winner ? winner.id : null; },
+    get tick() { return tickCount; },
+    setDir(playerIndex, dirName) {
+      const p = playerIndex === 0 ? p1 : p2;
+      if (DIR[dirName]) p.queuedDir = DIR[dirName];
+    },
+    restart() { resetGame(); },
+    forceCapture(playerIndex) {
+      const p = playerIndex === 0 ? p1 : p2;
+      captureTerritory(p);
+    },
+  };
+
+  // ---------- Boot ----------
+  resetGame();
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

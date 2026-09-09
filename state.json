@@ -2,8 +2,8 @@
   "cycle": 2,
   "cycleStarted": "2026-09-09T00:00:00Z",
   "lastUpdated": "2026-09-09T00:00:00Z",
-  "phase": "design",
-  "nextPhase": "implementation",
+  "phase": "implementation",
+  "nextPhase": "testing",
   "selectedConcept": "Territory Ink",
   "checkpoints": [
     {
@@ -17,6 +17,12 @@
       "completedAt": "2026-09-09T00:00:00Z",
       "outputs": ["docs/cycle2-design.md"],
       "notes": "Single-file HTML5 canvas architecture: tick-based grid movement (110ms), BFS flood-fill territory capture on loop closure, lives-based win condition (3 lives), ordered collision-resolution rules, live-getter test hooks (window.__territoryInk) planned from the start to avoid Cycle 1's stale-snapshot bug. Documented scope cut: capture only claims neutral cells, not opponent territory."
+    },
+    {
+      "phase": "implementation",
+      "completedAt": "2026-09-09T00:00:00Z",
+      "outputs": ["game/territory-ink.html"],
+      "notes": "Self-contained playable prototype implemented per docs/cycle2-design.md: grid movement, ordered per-tick collision resolution (bounds/head-on/self-crash/opponent trail-cut), BFS flood-fill capture, lives-based win/restart, HUD, and window.__territoryInk test hooks using live getters (board/players/gameOver/winner/tick) plus setDir()/restart()/forceCapture() helpers for deterministic automated testing. No build step, no external assets/deps."
     }
   ],
   "blockers": [],
@@ -25,6 +31,6 @@
     "(carried from Cycle 1) Automated end-to-end test of Orbit Duel's win condition + restart flow.",
     "(carried from Cycle 1) Consider an AI opponent / sudden-death mode for Orbit Duel in a future cycle (logged as 'Orbit Duel: Rival Mode' candidate in docs/cycle2-concepts.md)."
   ],
-  "budgetNotes": "Cycle 2 research and design phases completed in-session (no subagent fan-out), consistent with Cycle 1's budget approach.",
-  "resumeInstructions": "Cycle 2 research and design are done (phase: design, checkpoints saved) with Territory Ink selected and architecture documented in docs/cycle2-design.md. Resume at 'implementation': build game/territory-ink.html per the design doc, then testing (docs/cycle2-test-results.md) using Playwright (globally installed at /opt/node22/lib/node_modules/playwright; not in a local package.json). Do not re-run research or design."
+  "budgetNotes": "Cycle 2 research, design, and implementation phases completed in-session (no subagent fan-out), consistent with Cycle 1's budget approach.",
+  "resumeInstructions": "Cycle 2 research/design/implementation are done (phase: implementation, checkpoints saved). game/territory-ink.html is playable and exposes window.__territoryInk test hooks. Resume at 'testing': write and run Playwright smoke/behavior tests (headless Chromium, file:// URL) covering load, movement/trail, self-crash, capture via flood-fill, opponent trail-cut, and win/restart; save results to docs/cycle2-test-results.md, then mark phase 'done'. Playwright is globally installed at /opt/node22/lib/node_modules/playwright (not in a local package.json) -- run via NODE_PATH or an absolute require path. Do not re-run research/design/implementation."
 }
