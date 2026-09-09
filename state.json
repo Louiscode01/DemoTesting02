@@ -2,8 +2,8 @@
   "cycle": 2,
   "cycleStarted": "2026-09-09T00:00:00Z",
   "lastUpdated": "2026-09-09T00:00:00Z",
-  "phase": "research",
-  "nextPhase": "design",
+  "phase": "design",
+  "nextPhase": "implementation",
   "selectedConcept": "Territory Ink",
   "checkpoints": [
     {
@@ -11,6 +11,12 @@
       "completedAt": "2026-09-09T00:00:00Z",
       "outputs": ["docs/cycle2-concepts.md"],
       "notes": "5 concepts brainstormed and scored (Echo Maze, Stack Attack: Tower Duel, Pulse Runner, Territory Ink, Orbit Duel: Rival Mode); Territory Ink selected for genre novelty vs. Cycle 1's Orbit Duel, Pulse Runner as fallback. Orbit Duel: Rival Mode carried forward as a future-cycle candidate rather than pursued now."
+    },
+    {
+      "phase": "design",
+      "completedAt": "2026-09-09T00:00:00Z",
+      "outputs": ["docs/cycle2-design.md"],
+      "notes": "Single-file HTML5 canvas architecture: tick-based grid movement (110ms), BFS flood-fill territory capture on loop closure, lives-based win condition (3 lives), ordered collision-resolution rules, live-getter test hooks (window.__territoryInk) planned from the start to avoid Cycle 1's stale-snapshot bug. Documented scope cut: capture only claims neutral cells, not opponent territory."
     }
   ],
   "blockers": [],
@@ -19,6 +25,6 @@
     "(carried from Cycle 1) Automated end-to-end test of Orbit Duel's win condition + restart flow.",
     "(carried from Cycle 1) Consider an AI opponent / sudden-death mode for Orbit Duel in a future cycle (logged as 'Orbit Duel: Rival Mode' candidate in docs/cycle2-concepts.md)."
   ],
-  "budgetNotes": "Cycle 2 research phase completed in-session (no subagent fan-out), consistent with Cycle 1's budget approach.",
-  "resumeInstructions": "Cycle 2 research is done (phase: research, checkpoint saved) with Territory Ink selected. Resume at 'design': write docs/cycle2-design.md (architecture: single HTML5 canvas file, tick-based grid movement, BFS flood-fill territory capture, lives-based win condition), then proceed to implementation (game/territory-ink.html) and testing (docs/cycle2-test-results.md). Do not re-run the research phase or re-litigate concept selection."
+  "budgetNotes": "Cycle 2 research and design phases completed in-session (no subagent fan-out), consistent with Cycle 1's budget approach.",
+  "resumeInstructions": "Cycle 2 research and design are done (phase: design, checkpoints saved) with Territory Ink selected and architecture documented in docs/cycle2-design.md. Resume at 'implementation': build game/territory-ink.html per the design doc, then testing (docs/cycle2-test-results.md) using Playwright (globally installed at /opt/node22/lib/node_modules/playwright; not in a local package.json). Do not re-run research or design."
 }
