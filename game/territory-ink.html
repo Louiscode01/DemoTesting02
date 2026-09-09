@@ -446,6 +446,13 @@
       const p = playerIndex === 0 ? p1 : p2;
       captureTerritory(p);
     },
+    // Test-only: directly invoke the death/life-loss path without needing to
+    // script a real out-of-bounds or trail-cut over several real-time ticks.
+    // Used by the automated win-condition test for a fast, deterministic run.
+    forceDie(playerIndex) {
+      const p = playerIndex === 0 ? p1 : p2;
+      if (p.alive) die(p);
+    },
   };
 
   // ---------- Boot ----------

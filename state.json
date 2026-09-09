@@ -2,8 +2,8 @@
   "cycle": 2,
   "cycleStarted": "2026-09-09T00:00:00Z",
   "lastUpdated": "2026-09-09T00:00:00Z",
-  "phase": "implementation",
-  "nextPhase": "testing",
+  "phase": "done",
+  "nextPhase": "research",
   "selectedConcept": "Territory Ink",
   "checkpoints": [
     {
@@ -22,15 +22,24 @@
       "phase": "implementation",
       "completedAt": "2026-09-09T00:00:00Z",
       "outputs": ["game/territory-ink.html"],
-      "notes": "Self-contained playable prototype implemented per docs/cycle2-design.md: grid movement, ordered per-tick collision resolution (bounds/head-on/self-crash/opponent trail-cut), BFS flood-fill capture, lives-based win/restart, HUD, and window.__territoryInk test hooks using live getters (board/players/gameOver/winner/tick) plus setDir()/restart()/forceCapture() helpers for deterministic automated testing. No build step, no external assets/deps."
+      "notes": "Self-contained playable prototype implemented per docs/cycle2-design.md: grid movement, ordered per-tick collision resolution (bounds/head-on/self-crash/opponent trail-cut), BFS flood-fill capture, lives-based win/restart, HUD, and window.__territoryInk test hooks using live getters (board/players/gameOver/winner/tick) plus setDir()/restart()/forceCapture()/forceDie() helpers for deterministic automated testing. No build step, no external assets/deps."
+    },
+    {
+      "phase": "testing",
+      "completedAt": "2026-09-09T00:00:00Z",
+      "outputs": ["docs/cycle2-test-results.md", "tests/cycle2-territory-ink.test.js"],
+      "notes": "Automated Playwright/headless-Chromium tests: all 6 tests / 19 assertions PASS (load+smoke, movement/trail, self-crash, flood-fill capture, opponent trail-cut, win condition + restart). Two issues found and fixed during test authoring (not gameplay bugs): (1) the first self-crash test path looped back through the player's own base and silently tested capture instead of a crash -- fixed by tracing a path that stays outside the base until it deliberately re-crosses its own trail, with a strict lives===before-1 assertion; (2) the win-condition test tried to reach 0 lives via real-time scripted deaths only, which hung because tick() halts tickCount once gameOver flips true -- fixed by adding a forceDie() test-only hook to drive the remaining deaths deterministically after proving one real death works. Fun/balance tuning and head-on collision are reasoned about but not covered by automated tests -- flagged as follow-ups."
     }
   ],
   "blockers": [],
   "followUps": [
+    "Human/manual playtest of Territory Ink for feel/balance tuning (TICK_MS, START_LIVES, RESPAWN_TICKS, grid size).",
+    "Automated test for the head-on collision rule (both players moving into the same cell on the same tick).",
+    "Consider extending capture to claim enclosed opponent territory (currently only neutral cells are captured -- documented scope cut in docs/cycle2-design.md).",
     "(carried from Cycle 1) Human/manual playtest of Orbit Duel for feel/balance tuning.",
     "(carried from Cycle 1) Automated end-to-end test of Orbit Duel's win condition + restart flow.",
     "(carried from Cycle 1) Consider an AI opponent / sudden-death mode for Orbit Duel in a future cycle (logged as 'Orbit Duel: Rival Mode' candidate in docs/cycle2-concepts.md)."
   ],
-  "budgetNotes": "Cycle 2 research, design, and implementation phases completed in-session (no subagent fan-out), consistent with Cycle 1's budget approach.",
-  "resumeInstructions": "Cycle 2 research/design/implementation are done (phase: implementation, checkpoints saved). game/territory-ink.html is playable and exposes window.__territoryInk test hooks. Resume at 'testing': write and run Playwright smoke/behavior tests (headless Chromium, file:// URL) covering load, movement/trail, self-crash, capture via flood-fill, opponent trail-cut, and win/restart; save results to docs/cycle2-test-results.md, then mark phase 'done'. Playwright is globally installed at /opt/node22/lib/node_modules/playwright (not in a local package.json) -- run via NODE_PATH or an absolute require path. Do not re-run research/design/implementation."
+  "budgetNotes": "Cycle 2 completed fully in-session (no subagent fan-out) with no usage-limit warning encountered, consistent with Cycle 1's budget approach.",
+  "resumeInstructions": "Cycle 2 is complete (phase: done) with valid outputs at every checkpoint -- do not re-execute cycle 2's research/design/implementation/testing phases. On next invocation, start Cycle 3 at 'research': read docs/cycle2-concepts.md and docs/concepts.md for prior art (avoid re-proposing Orbit Duel, Territory Ink, Gravity Flip Runner, Chrono Loop, Color Bind, Signal Weaver, Echo Maze, Stack Attack: Tower Duel, or Pulse Runner verbatim; a genuine evolution of one is fine) and consider addressing the 'followUps' list above as one of the new cycle's candidate concepts (e.g. 'Orbit Duel: Rival Mode' or 'Echo Maze' were both scored reasonably in Cycle 2 but not selected)."
 }
