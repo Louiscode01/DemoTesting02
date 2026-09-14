@@ -1,42 +1,85 @@
 {
-  "cycle": 1,
-  "cycleStarted": "2026-08-31T12:55:00Z",
-  "lastUpdated": "2026-08-31T13:40:00Z",
+  "cycle": 2,
+  "cycleStarted": "2026-09-14T00:00:00Z",
+  "lastUpdated": "2026-09-14T00:50:00Z",
   "phase": "done",
   "nextPhase": "research",
-  "selectedConcept": "Orbit Duel",
+  "selectedConcept": "Ink Territory",
   "checkpoints": [
     {
       "phase": "research",
-      "completedAt": "2026-08-31T12:58:00Z",
-      "outputs": ["docs/concepts.md"],
-      "notes": "5 concepts brainstormed and scored; Orbit Duel selected, Gravity Flip Runner as fallback."
+      "completedAt": "2026-09-14T00:10:00Z",
+      "outputs": ["docs/cycle2-concepts.md"],
+      "notes": "5 new concepts brainstormed and scored (Ink Territory, Echo Maze, Tether Duel, Pulse Runner, plus an Orbit Duel refinement option carried from Cycle 1 follow-ups). Ink Territory selected; Echo Maze as fallback."
     },
     {
       "phase": "design",
-      "completedAt": "2026-08-31T13:02:00Z",
-      "outputs": ["docs/design.md"],
-      "notes": "Single-file HTML5 canvas architecture, tunable constants, testing plan defined."
+      "completedAt": "2026-09-14T00:20:00Z",
+      "outputs": ["docs/cycle2-design.md"],
+      "notes": "Single-file HTML5 canvas + grid architecture defined: fixed-timestep tick loop, wet-trail/territory-seal rules, death/respawn rules, debug hooks (setTimeRemaining, tick()) planned up front to close Cycle 1's win-condition testing gap."
     },
     {
       "phase": "implementation",
-      "completedAt": "2026-08-31T13:25:00Z",
-      "outputs": ["game/index.html"],
-      "notes": "Self-contained playable prototype: 2-player local gravity-duel arcade game, no build step, no external assets/deps."
+      "completedAt": "2026-09-14T00:35:00Z",
+      "outputs": ["game/ink-territory.html"],
+      "notes": "Self-contained playable prototype implemented per design.md: grid movement, wet-trail/territory-seal, death/respawn, HUD, restart, and window.__inkTerritory debug hooks (tick(), setTimeRemaining, reset())."
     },
     {
       "phase": "testing",
-      "completedAt": "2026-08-31T13:40:00Z",
-      "outputs": ["docs/test-results.md"],
-      "notes": "Automated Playwright/headless-Chromium smoke tests: load+interaction test and ~6s extended-session test, both PASS. Found and fixed one test-hook staleness bug (window.__orbitDuel.bullets snapshot vs live getter) during testing. Win-condition end-to-end and fun/balance tuning are NOT covered by automated tests -- flagged as follow-up."
+      "completedAt": "2026-09-14T00:50:00Z",
+      "outputs": ["docs/cycle2-test-results.md"],
+      "notes": "Automated Playwright/headless-Chromium test suite: 8/8 PASS, including a full win-condition + restart end-to-end test (closing the exact gap Cycle 1 flagged as a follow-up). Found and fixed one testability gap during testing: added a setPaused() debug hook so scripted tick() sequences aren't perturbed by the game's real-time auto-forward movement between Playwright round-trips."
     }
   ],
   "blockers": [],
   "followUps": [
-    "Human/manual playtest of Orbit Duel for feel/balance tuning (SHIP_THRUST, SHIP_DRAG, G, BULLET_SPEED).",
-    "Automated end-to-end test of the win condition + restart flow.",
-    "Consider a simple AI opponent or additional modes if this concept is revisited in a future cycle."
+    "Human/manual playtest of Ink Territory for feel/balance tuning (TICK_MS move speed, RESPAWN_MS).",
+    "Automated test for the head-on-collision rule (both players landing on the same cell in one tick) -- verified by code review only so far.",
+    "Orbit Duel's Cycle 1 follow-ups remain open and undeferred further: manual playtest, automated win-condition test (now demonstrated achievable -- see Ink Territory's setTimeRemaining/tick hooks as a reusable pattern), and a possible simple AI opponent.",
+    "Consider the design doc's documented scope cut (Qix-style enclosed-area flood fill, vs. path-only sealing) as a candidate enhancement if Ink Territory is revisited in a future cycle."
   ],
-  "budgetNotes": "Single-session run, no subagent fan-out used to conserve budget. Implementation kept to one self-contained HTML file (no build step) to keep scope tight. Cycle 1 completed fully within budget with no usage-limit warning encountered.",
-  "resumeInstructions": "Cycle 1 is complete (phase: done) with valid outputs at every checkpoint -- do not re-execute cycle 1's research/design/implementation/testing phases. On next invocation, start Cycle 2 at 'research': read docs/concepts.md for prior art (avoid re-proposing Orbit Duel/Gravity Flip Runner/Color Bind/Signal Weaver/Chrono Loop verbatim; a genuine evolution of one is fine) and consider addressing the 'followUps' list above (e.g. iterating on Orbit Duel) as one of the new cycle's candidate concepts."
+  "budgetNotes": "Cycle 2 completed in the same single-session, no-subagent-fan-out style as Cycle 1 to conserve budget. Cycle 1's full history preserved below under history[0] for audit. Cycle 2 completed fully within budget with no usage-limit warning encountered.",
+  "resumeInstructions": "Cycle 2 is complete (phase: done) with valid outputs at every checkpoint -- do not re-execute cycle 2's research/design/implementation/testing phases. On next invocation, start Cycle 3 at 'research': read docs/cycle2-concepts.md for prior art (avoid re-proposing Ink Territory/Echo Maze/Tether Duel/Pulse Runner, or Cycle 1's Gravity Flip Runner/Chrono Loop/Color Bind/Signal Weaver/Orbit Duel, verbatim; a genuine evolution of one is fine) and consider addressing the 'followUps' list above as one of the new cycle's candidate concepts.",
+  "history": [
+    {
+      "cycle": 1,
+      "cycleStarted": "2026-08-31T12:55:00Z",
+      "lastUpdated": "2026-08-31T13:40:00Z",
+      "phase": "done",
+      "selectedConcept": "Orbit Duel",
+      "checkpoints": [
+        {
+          "phase": "research",
+          "completedAt": "2026-08-31T12:58:00Z",
+          "outputs": ["docs/concepts.md"],
+          "notes": "5 concepts brainstormed and scored; Orbit Duel selected, Gravity Flip Runner as fallback."
+        },
+        {
+          "phase": "design",
+          "completedAt": "2026-08-31T13:02:00Z",
+          "outputs": ["docs/design.md"],
+          "notes": "Single-file HTML5 canvas architecture, tunable constants, testing plan defined."
+        },
+        {
+          "phase": "implementation",
+          "completedAt": "2026-08-31T13:25:00Z",
+          "outputs": ["game/index.html"],
+          "notes": "Self-contained playable prototype: 2-player local gravity-duel arcade game, no build step, no external assets/deps."
+        },
+        {
+          "phase": "testing",
+          "completedAt": "2026-08-31T13:40:00Z",
+          "outputs": ["docs/test-results.md"],
+          "notes": "Automated Playwright/headless-Chromium smoke tests: load+interaction test and ~6s extended-session test, both PASS. Found and fixed one test-hook staleness bug (window.__orbitDuel.bullets snapshot vs live getter) during testing. Win-condition end-to-end and fun/balance tuning are NOT covered by automated tests -- flagged as follow-up."
+        }
+      ],
+      "blockers": [],
+      "followUps": [
+        "Human/manual playtest of Orbit Duel for feel/balance tuning (SHIP_THRUST, SHIP_DRAG, G, BULLET_SPEED).",
+        "Automated end-to-end test of the win condition + restart flow.",
+        "Consider a simple AI opponent or additional modes if this concept is revisited in a future cycle."
+      ],
+      "budgetNotes": "Single-session run, no subagent fan-out used to conserve budget. Implementation kept to one self-contained HTML file (no build step) to keep scope tight. Cycle 1 completed fully within budget with no usage-limit warning encountered."
+    }
+  ]
 }
