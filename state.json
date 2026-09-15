@@ -1,9 +1,9 @@
 {
   "cycle": 2,
   "cycleStarted": "2026-09-15T00:00:00Z",
-  "lastUpdated": "2026-09-15T00:05:00Z",
-  "phase": "research",
-  "nextPhase": "design",
+  "lastUpdated": "2026-09-15T00:20:00Z",
+  "phase": "design",
+  "nextPhase": "implementation",
   "selectedConcept": "Orbit Duel: Rival AI",
   "checkpoints": [
     {
@@ -11,6 +11,12 @@
       "completedAt": "2026-09-15T00:05:00Z",
       "outputs": ["docs/cycle2-concepts.md"],
       "notes": "5 concepts brainstormed (avoiding Cycle 1 duplicates) and scored; 'Orbit Duel: Rival AI' selected -- an evolution of Cycle 1's Orbit Duel that adds a predictive-targeting AI opponent and closes the win-condition e2e test gap flagged in Cycle 1. Tile Tactics selected as fallback."
+    },
+    {
+      "phase": "design",
+      "completedAt": "2026-09-15T00:20:00Z",
+      "outputs": ["docs/cycle2-design.md"],
+      "notes": "Opus 5 design pass. Modify game/index.html in place (no second file/build step). AI aiming: sampled fan of candidate firing angles forward-simulated through the sim's own gravityAccel(), scored by min predicted miss distance -- honestly implementable, reuses existing physics fns. AI movement: 3-state priority (escape star / reposition-orbit / engage). New readIntent() layer means AI uses the same control surface as a human. Mode-select via new phase state machine ('menu'|'playing'|'gameover') gating step(); keys 1/2 to start, R restart same mode, M to menu. 15 new AI_* tunables specified, no Cycle 1 constants changed. Testing plan: tests/e2e.spec.js (Playwright, file:// like Cycle 1) with an extended __orbitDuel hook (startGame, awardKill routing through real registerKill(), aiDebug, setAimJitter) -- Test 3 drives an actual win+restart e2e (closes Cycle 1 gap), Test 4 is an AI-agency smoke test (angle change + fires + no NaN)."
     }
   ],
   "blockers": [],
@@ -20,5 +26,5 @@
     "Automated end-to-end test of the win condition + restart flow -- being addressed in Cycle 2."
   ],
   "budgetNotes": "Cycle 2 research phase completed in-session (Sonnet 5). Reusing Cycle 1's tested physics/render core to keep Cycle 2 scope small.",
-  "resumeInstructions": "Cycle 2 research phase complete with valid output (docs/cycle2-concepts.md) -- do not re-execute it. Resume at 'design': produce docs/cycle2-design.md covering the AI-decision module (predictive targeting using gravity-curved trajectories), mode-select UI (2-player vs vs-AI), and the win-condition e2e test plan, then proceed to implementation and testing."
+  "resumeInstructions": "Cycle 2 research and design phases complete with valid outputs (docs/cycle2-concepts.md, docs/cycle2-design.md) -- do not re-execute them. Resume at 'implementation': modify game/index.html in place per docs/cycle2-design.md (readIntent() layer, aiDecide()/simulateShot(), registerKill() helper, phase state machine + menu, 15 new AI_* constants), then write tests/e2e.spec.js + playwright.config.js and run them, then document results in docs/cycle2-test-results.md."
 }
