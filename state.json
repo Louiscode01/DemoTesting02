@@ -1,9 +1,9 @@
 {
   "cycle": 2,
   "cycleStarted": "2026-09-15T00:00:00Z",
-  "lastUpdated": "2026-09-15T00:20:00Z",
-  "phase": "design",
-  "nextPhase": "implementation",
+  "lastUpdated": "2026-09-15T01:35:00Z",
+  "phase": "done",
+  "nextPhase": "research",
   "selectedConcept": "Orbit Duel: Rival AI",
   "checkpoints": [
     {
@@ -17,14 +17,27 @@
       "completedAt": "2026-09-15T00:20:00Z",
       "outputs": ["docs/cycle2-design.md"],
       "notes": "Opus 5 design pass. Modify game/index.html in place (no second file/build step). AI aiming: sampled fan of candidate firing angles forward-simulated through the sim's own gravityAccel(), scored by min predicted miss distance -- honestly implementable, reuses existing physics fns. AI movement: 3-state priority (escape star / reposition-orbit / engage). New readIntent() layer means AI uses the same control surface as a human. Mode-select via new phase state machine ('menu'|'playing'|'gameover') gating step(); keys 1/2 to start, R restart same mode, M to menu. 15 new AI_* tunables specified, no Cycle 1 constants changed. Testing plan: tests/e2e.spec.js (Playwright, file:// like Cycle 1) with an extended __orbitDuel hook (startGame, awardKill routing through real registerKill(), aiDebug, setAimJitter) -- Test 3 drives an actual win+restart e2e (closes Cycle 1 gap), Test 4 is an AI-agency smoke test (angle change + fires + no NaN)."
+    },
+    {
+      "phase": "implementation",
+      "completedAt": "2026-09-15T01:10:00Z",
+      "outputs": ["game/index.html", "package.json", "playwright.config.js", ".gitignore"],
+      "notes": "Implemented per docs/cycle2-design.md: readIntent() layer, aiDecide()/simulateShot()/findAimSolution() AI pilot (sampled trajectory search through gravityAccel()), registerKill() helper extracted from the bullet-collision loop, phase state machine ('menu'|'playing'|'gameover') + mode ('local'|'ai'), drawMenu(), startGame(m), 15 new AI_* constants, extended __orbitDuel test hook (startGame, awardKill, aiDebug, setAimJitter, phase/mode/winner getters, gameOver kept as derived getter for back-compat). Single self-contained HTML file preserved, no build step to play."
+    },
+    {
+      "phase": "testing",
+      "completedAt": "2026-09-15T01:35:00Z",
+      "outputs": ["tests/e2e.spec.js", "docs/cycle2-test-results.md"],
+      "notes": "Real Playwright Test suite (4 tests) run against game/index.html via file://, stable across 4 consecutive full-suite runs. Test 1/2 port Cycle 1's smoke checks (updated for the new menu gate). Test 3 closes the Cycle 1 win-condition e2e gap: drives a real win via awardKill()->registerKill(), verifies the overlay is actually rendered (pixel check), verifies R-restart. Test 4 is an AI-agency smoke test (angle change, tick/thrust/fire counters, live P2 bullet observed, no NaN). Found and fixed two test-only timing bugs during this pass (keyboard.press() zero-delay race vs requestAnimationFrame; reading canvas pixels before a post-state-change frame had painted) -- both were test-harness races, not gameplay bugs. Environment required pinning a local @playwright/test@1.56.1 dependency (design doc assumed it was already resolvable) to match the pre-installed Chromium build; documented in cycle2-test-results.md."
     }
   ],
   "blockers": [],
   "followUps": [
-    "Human/manual playtest of Orbit Duel for feel/balance tuning (SHIP_THRUST, SHIP_DRAG, G, BULLET_SPEED) -- carried over from Cycle 1, still open.",
-    "Consider a simple AI opponent or additional modes if this concept is revisited in a future cycle. -- being addressed in Cycle 2.",
-    "Automated end-to-end test of the win condition + restart flow -- being addressed in Cycle 2."
+    "Human/manual playtest of Orbit Duel for feel/balance tuning (SHIP_THRUST, SHIP_DRAG, G, BULLET_SPEED, and now the AI_* constants too) -- carried over from Cycle 1 and Cycle 2, still open. Now the single most-repeated open item across two cycles; strong candidate to prioritize (or explicitly descope) next cycle rather than deferring a third time.",
+    "AI difficulty curve unverified against a moving/thrusting human opponent -- Test 4 only exercises the AI against a stationary target (by design, as a smoke test). Manual playtest would also cover this.",
+    "Selectable AI difficulty in the UI (AI_AIM_JITTER is currently a code-only knob) -- explicitly out of scope for Cycle 2, listed as a candidate for a future cycle.",
+    "AI-vs-AI mode and bullet-dodging/threat-evasion AI -- explicitly out of scope for Cycle 2 (docs/cycle2-design.md)."
   ],
-  "budgetNotes": "Cycle 2 research phase completed in-session (Sonnet 5). Reusing Cycle 1's tested physics/render core to keep Cycle 2 scope small.",
-  "resumeInstructions": "Cycle 2 research and design phases complete with valid outputs (docs/cycle2-concepts.md, docs/cycle2-design.md) -- do not re-execute them. Resume at 'implementation': modify game/index.html in place per docs/cycle2-design.md (readIntent() layer, aiDecide()/simulateShot(), registerKill() helper, phase state machine + menu, 15 new AI_* constants), then write tests/e2e.spec.js + playwright.config.js and run them, then document results in docs/cycle2-test-results.md."
+  "budgetNotes": "Cycle 2 completed in-session: research (Sonnet 5, in-session), design (Opus 5, one background subagent), implementation + testing (Sonnet 5, in-session, no further subagent fan-out). Reused Cycle 1's tested physics/render core to keep scope small -- net-new code is the AI pilot module, intent layer, and menu state machine (~250 lines) inside the same single-file game/index.html. No usage-limit warning encountered.",
+  "resumeInstructions": "Cycle 2 is complete (phase: done) with valid outputs at every checkpoint (docs/cycle2-concepts.md, docs/cycle2-design.md, game/index.html, tests/e2e.spec.js, docs/cycle2-test-results.md) -- do not re-execute cycle 2's phases. On next invocation, start Cycle 3 at 'research': read docs/cycle2-concepts.md and docs/cycle2-design.md for prior art (avoid re-proposing Orbit Duel/Orbit Duel: Rival AI/Gravity Flip Runner/Chrono Loop/Color Bind/Signal Weaver/Echo Maze/Tile Tactics/Bounce Forge/Word Siege verbatim; a genuine evolution is fine) and strongly consider the top 'followUps' item (human/manual playtest + balance pass on Orbit Duel) given it has now been deferred twice."
 }

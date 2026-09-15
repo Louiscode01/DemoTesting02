@@ -1,0 +1,12 @@
+{
+  "name": "orbit-duel-tests",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Test harness for the Orbit Duel prototype (game/index.html). No build step for the game itself -- this only supports running the automated Playwright tests.",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.56.1"
+  }
+}

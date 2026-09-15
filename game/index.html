@@ -39,9 +39,10 @@
 <div id="wrap">
   <canvas id="game" width="900" height="600"></canvas>
   <div id="hint">
+    1: 2-player local &nbsp;|&nbsp; 2: vs Rival AI &nbsp;|&nbsp;
     Player 1: A/D rotate, W thrust, Space fire &nbsp;|&nbsp;
-    Player 2: Left/Right rotate, Up thrust, Enter fire &nbsp;|&nbsp;
-    R to restart after a win. First to 5 kills wins. Watch the star's gravity — it bends ships and bullets alike.
+    Player 2: Left/Right rotate, Up thrust, Enter fire (2-player mode) &nbsp;|&nbsp;
+    R to restart after a win, M for menu. First to 5 kills wins. Watch the star's gravity — it bends ships and bullets alike.
   </div>
 </div>
 <script>
@@ -63,6 +64,29 @@
   const WIN_SCORE = 5;
   const RESPAWN_DELAY = 1.0;      // seconds
 
+  const MODE_LOCAL = 'local';
+  const MODE_AI = 'ai';
+
+  // --- AI pilot ---
+  // Aiming
+  const AI_AIM_SAMPLES = 9;          // candidate firing angles per search
+  const AI_AIM_SPREAD = 0.9;         // radians, half-width of the candidate fan around direct bearing
+  const AI_SIM_STEPS = 45;           // forward-simulation horizon in steps
+  const AI_SIM_DT = 1 / 30;          // fixed prediction timestep (frame-rate independent AI)
+  const AI_AIM_TOLERANCE = 18;       // px; min predicted miss distance that counts as a solution
+  const AI_FIRE_ANGLE_TOL = 0.10;    // radians; facing error allowed when pulling the trigger
+  const AI_AIM_DEADZONE = 0.03;      // radians; stop rotating inside this, prevents oscillation
+  const AI_RETARGET_INTERVAL = 0.10; // seconds between full aim searches
+  let AI_AIM_JITTER = 0.035;         // radians of random aim error; primary difficulty knob
+                                      // (mutable, not const: test hook can zero it for determinism)
+  // Movement
+  const AI_DANGER_RADIUS = 90;       // px from star center that triggers the escape burn
+  const AI_ESCAPE_LOOKAHEAD = 0.6;   // seconds of extrapolation for the danger check
+  const AI_RANGE_MIN = 140;          // px; closer than this, back off
+  const AI_RANGE_MAX = 340;          // px; farther than this, close in
+  const AI_ORBIT_BIAS = 0.5;         // radians of tangential bias applied while repositioning
+  const AI_THRUST_ALIGN_TOL = 0.5;   // radians; only thrust when roughly facing the desired heading
+
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
   const W = canvas.width, H = canvas.height;
@@ -79,6 +103,13 @@
       return { x: a.x / l, y: a.y / l };
     }
   };
+
+  function shortestSignedAngleDelta(from, to) {
+    let d = (to - from) % (Math.PI * 2);
+    if (d > Math.PI) d -= Math.PI * 2;
+    if (d < -Math.PI) d += Math.PI * 2;
+    return d;
+  }
 
   // ---------- Starfield (static, seeded) ----------
   function seededRandom(seed) {
@@ -110,7 +141,21 @@
       respawnAt: 0,
       cooldown: 0,
       thrusting: false,
-      score: 0
+      score: 0,
+      isAI: false,
+      ai: null
+    };
+  }
+
+  function resetAIState(ship) {
+    ship.ai = {
+      aimAngle: ship.angle,
+      hasSolution: false,
+      retargetAt: 0,
+      ticks: 0,
+      fires: 0,
+      rotateTicks: 0,
+      thrustTicks: 0
     };
   }
 
@@ -128,7 +173,8 @@
 
   let bullets = [];
   let particles = [];
-  let gameOver = false;
+  let phase = 'menu';   // 'menu' | 'playing' | 'gameover'
+  let mode = null;      // 'local' | 'ai'
   let winner = null;
 
   // ---------- Input ----------
@@ -138,25 +184,37 @@
     if (['Space', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.code)) {
       e.preventDefault();
     }
-    if (gameOver && e.code === 'KeyR') resetGame();
+    if (phase === 'menu') {
+      if (e.code === 'Digit1') startGame(MODE_LOCAL);
+      else if (e.code === 'Digit2') startGame(MODE_AI);
+    } else if (phase === 'gameover') {
+      if (e.code === 'KeyR') startGame(mode);
+      else if (e.code === 'KeyM') phase = 'menu';
+    }
   }, { passive: false });
   window.addEventListener('keyup', (e) => keysDown.delete(e.code));
 
-  function resetGame() {
+  function startGame(m) {
     players[0].pos = { ...SPAWN_P1 };
     players[0].vel = { x: 0, y: 0 };
     players[0].angle = 0;
     players[0].alive = true;
     players[0].score = 0;
+    players[0].isAI = false;
+
     players[1].pos = { ...SPAWN_P2 };
     players[1].vel = { x: 0, y: 0 };
     players[1].angle = Math.PI;
     players[1].alive = true;
     players[1].score = 0;
+    players[1].isAI = (m === MODE_AI);
+    resetAIState(players[1]);
+
     bullets = [];
     particles = [];
-    gameOver = false;
     winner = null;
+    mode = m;
+    phase = 'playing';
   }
 
   // ---------- Physics ----------
@@ -195,8 +253,148 @@
     ship.alive = true;
   }
 
+  function registerKill(shooterId, victim, now) {
+    spawnExplosion(victim.pos, victim.color);
+    victim.alive = false;
+    victim.respawnAt = now + RESPAWN_DELAY;
+    const shooter = players.find(p => p.id === shooterId);
+    if (shooter) {
+      shooter.score += 1;
+      if (shooter.score >= WIN_SCORE) {
+        phase = 'gameover';
+        winner = shooter.id;
+      }
+    }
+  }
+
+  // ---------- AI pilot ----------
+  // Forward-simulates a candidate shot fired *now* at `angle` through the same
+  // gravity well the real sim uses, tracking the minimum bullet-to-target distance
+  // reached. The target is assumed non-thrusting (gravity + drag only) since the AI
+  // cannot know the opponent's future input. Returns that minimum distance.
+  function simulateShot(ship, target, angle) {
+    const dir = { x: Math.cos(angle), y: Math.sin(angle) };
+    let bPos = v.add(ship.pos, v.scale(dir, SHIP_RADIUS + 4));
+    let bVel = v.add(ship.vel, v.scale(dir, BULLET_SPEED));
+    let tPos = { ...target.pos };
+    let tVel = { ...target.vel };
+    let minDist = v.len(v.sub(bPos, tPos));
+
+    for (let s = 0; s < AI_SIM_STEPS; s++) {
+      bVel = v.add(bVel, v.scale(gravityAccel(bPos), AI_SIM_DT));
+      bPos = v.add(bPos, v.scale(bVel, AI_SIM_DT));
+
+      tVel = v.add(tVel, v.scale(gravityAccel(tPos), AI_SIM_DT));
+      tVel = v.scale(tVel, Math.max(0, 1 - SHIP_DRAG * AI_SIM_DT));
+      tPos = v.add(tPos, v.scale(tVel, AI_SIM_DT));
+
+      const dist = v.len(v.sub(bPos, tPos));
+      if (dist < minDist) minDist = dist;
+
+      // Real bullets are absorbed by the star or eventually wrap; prediction
+      // doesn't model wrap (documented limitation), so treat leaving the arena
+      // or entering the star as "this candidate is spent" and stop early.
+      if (v.len(v.sub(bPos, CENTER)) < STAR_RADIUS) break;
+      if (bPos.x < 0 || bPos.x > W || bPos.y < 0 || bPos.y > H) break;
+    }
+    return minDist;
+  }
+
+  // Samples a fan of candidate firing angles around the direct bearing to the
+  // target, scores each by simulateShot(), and returns the best if it clears
+  // AI_AIM_TOLERANCE, else null (no solution yet -- AI should hold fire).
+  function findAimSolution(ship, target) {
+    const toTarget = v.sub(target.pos, ship.pos);
+    const bearing = Math.atan2(toTarget.y, toTarget.x);
+    let best = null;
+    for (let i = 0; i < AI_AIM_SAMPLES; i++) {
+      const t = AI_AIM_SAMPLES === 1 ? 0 : (i / (AI_AIM_SAMPLES - 1)) * 2 - 1; // -1..1
+      const angle = bearing + t * AI_AIM_SPREAD;
+      const minDist = simulateShot(ship, target, angle);
+      if (best === null || minDist < best.minDist) best = { angle, minDist };
+    }
+    return (best && best.minDist < AI_AIM_TOLERANCE) ? best : null;
+  }
+
+  // Runs once per tick. Never writes ship.vel/pos/bullets directly -- returns the
+  // same {left, right, thrust, fire} control surface a human produces, so the AI
+  // is physically incapable of doing anything a human player couldn't.
+  function aiDecide(ship, target, now) {
+    if (!ship.ai) resetAIState(ship);
+    const ai = ship.ai;
+    ai.ticks++;
+
+    let desiredAngle;
+    let wantThrust = false;
+
+    const distCenter = v.len(v.sub(CENTER, ship.pos));
+    const lookaheadPos = v.add(ship.pos, v.scale(ship.vel, AI_ESCAPE_LOOKAHEAD));
+    const distCenterLookahead = v.len(v.sub(CENTER, lookaheadPos));
+
+    if (distCenter < AI_DANGER_RADIUS || distCenterLookahead < AI_DANGER_RADIUS) {
+      // 1. Escape star (highest priority) -- the only hard safety behavior.
+      const away = v.norm(v.sub(ship.pos, CENTER));
+      desiredAngle = Math.atan2(away.y, away.x);
+      wantThrust = true;
+    } else {
+      const toTarget = v.sub(target.pos, ship.pos);
+      const distTarget = v.len(toTarget);
+      if (distTarget < AI_RANGE_MIN || distTarget > AI_RANGE_MAX) {
+        // 2. Reposition -- arc around the well (tangential bias) rather than
+        // plough straight through it.
+        const bearing = Math.atan2(toTarget.y, toTarget.x);
+        const towardOrAway = distTarget < AI_RANGE_MIN ? bearing + Math.PI : bearing;
+        desiredAngle = towardOrAway + AI_ORBIT_BIAS;
+        wantThrust = true;
+      } else {
+        // 3. Engage -- coast and shoot.
+        if (now >= ai.retargetAt) {
+          ai.retargetAt = now + AI_RETARGET_INTERVAL;
+          const solution = findAimSolution(ship, target);
+          if (solution) {
+            ai.aimAngle = solution.angle + (Math.random() * 2 - 1) * AI_AIM_JITTER;
+            ai.hasSolution = true;
+          } else {
+            ai.hasSolution = false;
+          }
+        }
+        desiredAngle = ai.aimAngle;
+        wantThrust = false;
+      }
+    }
+
+    const d = shortestSignedAngleDelta(ship.angle, desiredAngle);
+    const left = d < -AI_AIM_DEADZONE;
+    const right = d > AI_AIM_DEADZONE;
+    const thrust = wantThrust && Math.abs(d) < AI_THRUST_ALIGN_TOL;
+    const fire = ai.hasSolution &&
+      Math.abs(shortestSignedAngleDelta(ship.angle, ai.aimAngle)) < AI_FIRE_ANGLE_TOL;
+
+    if (left || right) ai.rotateTicks++;
+    if (thrust) ai.thrustTicks++;
+    if (fire) ai.fires++;
+
+    return { left, right, thrust, fire };
+  }
+
+  // Human ships read keysDown; AI ships get their control surface from aiDecide().
+  // Either way step() consumes the same {left, right, thrust, fire} shape.
+  function readIntent(ship, now) {
+    if (ship.isAI) {
+      const target = players.find(p => p.id !== ship.id);
+      return aiDecide(ship, target, now);
+    }
+    const k = ship.keys;
+    return {
+      left: keysDown.has(k.left),
+      right: keysDown.has(k.right),
+      thrust: keysDown.has(k.thrust),
+      fire: keysDown.has(k.fire)
+    };
+  }
+
   function step(dt, now) {
-    if (gameOver) return;
+    if (phase !== 'playing') return;
 
     for (const ship of players) {
       if (!ship.alive) {
@@ -204,11 +402,12 @@
         continue;
       }
 
-      const k = ship.keys;
-      if (keysDown.has(k.left)) ship.angle -= SHIP_ROT_SPEED * dt;
-      if (keysDown.has(k.right)) ship.angle += SHIP_ROT_SPEED * dt;
+      const intent = readIntent(ship, now);
 
-      ship.thrusting = keysDown.has(k.thrust);
+      if (intent.left) ship.angle -= SHIP_ROT_SPEED * dt;
+      if (intent.right) ship.angle += SHIP_ROT_SPEED * dt;
+
+      ship.thrusting = intent.thrust;
       if (ship.thrusting) {
         const thrustVec = { x: Math.cos(ship.angle), y: Math.sin(ship.angle) };
         ship.vel = v.add(ship.vel, v.scale(thrustVec, SHIP_THRUST * dt));
@@ -232,7 +431,7 @@
 
       // firing
       ship.cooldown -= dt;
-      if (keysDown.has(k.fire) && ship.cooldown <= 0) {
+      if (intent.fire && ship.cooldown <= 0) {
         ship.cooldown = FIRE_COOLDOWN;
         const dir = { x: Math.cos(ship.angle), y: Math.sin(ship.angle) };
         bullets.push({
@@ -264,15 +463,7 @@
         if (!ship.alive || ship.id === b.owner) continue;
         if (v.len(v.sub(b.pos, ship.pos)) < SHIP_RADIUS + 2) {
           b.ttl = 0;
-          spawnExplosion(ship.pos, ship.color);
-          ship.alive = false;
-          ship.respawnAt = now + RESPAWN_DELAY;
-          const shooter = players.find(p => p.id === b.owner);
-          if (shooter) shooter.score += 1;
-          if (shooter && shooter.score >= WIN_SCORE) {
-            gameOver = true;
-            winner = shooter.id;
-          }
+          registerKill(b.owner, ship, now);
         }
       }
     }
@@ -363,25 +554,48 @@
     ctx.globalAlpha = 1;
   }
 
+  function drawMenu() {
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    ctx.fillRect(0, 0, W, H);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#e8ecf4';
+    ctx.font = '42px "Courier New", monospace';
+    ctx.fillText('ORBIT DUEL', W / 2, H / 2 - 60);
+    ctx.font = '20px "Courier New", monospace';
+    ctx.fillText('1 — 2 Players (local)', W / 2, H / 2 - 10);
+    ctx.fillText('2 — vs Rival AI', W / 2, H / 2 + 20);
+    ctx.font = '14px "Courier New", monospace';
+    ctx.fillStyle = '#8b93a7';
+    ctx.fillText('P1: A/D rotate, W thrust, Space fire', W / 2, H / 2 + 60);
+    ctx.fillText('P2: Left/Right rotate, Up thrust, Enter fire (2-player mode)', W / 2, H / 2 + 82);
+    ctx.textAlign = 'left';
+  }
+
   function drawHUD() {
+    const p2Label = mode === MODE_AI ? 'AI' : 'P2';
+
     ctx.font = '20px "Courier New", monospace';
     ctx.fillStyle = players[0].color;
     ctx.fillText('P1: ' + players[0].score, 20, 30);
     ctx.fillStyle = players[1].color;
     ctx.textAlign = 'right';
-    ctx.fillText('P2: ' + players[1].score, W - 20, 30);
+    ctx.fillText(p2Label + ': ' + players[1].score, W - 20, 30);
     ctx.textAlign = 'left';
 
-    if (gameOver) {
+    if (phase === 'gameover') {
       ctx.fillStyle = 'rgba(0,0,0,0.55)';
       ctx.fillRect(0, 0, W, H);
       ctx.textAlign = 'center';
+      const winnerLabel = winner === 'P1' ? 'P1' : p2Label;
       ctx.fillStyle = winner === 'P1' ? players[0].color : players[1].color;
       ctx.font = '42px "Courier New", monospace';
-      ctx.fillText(winner + ' WINS', W / 2, H / 2 - 10);
+      ctx.fillText(winnerLabel + ' WINS', W / 2, H / 2 - 10);
       ctx.fillStyle = '#e8ecf4';
       ctx.font = '18px "Courier New", monospace';
       ctx.fillText('Press R to restart', W / 2, H / 2 + 26);
+      ctx.font = '14px "Courier New", monospace';
+      ctx.fillStyle = '#8b93a7';
+      ctx.fillText('Press M for menu', W / 2, H / 2 + 50);
       ctx.textAlign = 'left';
     }
   }
@@ -393,6 +607,7 @@
     drawParticles();
     for (const ship of players) drawShip(ship);
     drawHUD();
+    if (phase === 'menu') drawMenu();
   }
 
   // ---------- Main loop ----------
@@ -406,14 +621,27 @@
   }
   requestAnimationFrame(frame);
 
-  // Expose minimal hooks for automated smoke testing.
-  // NOTE: `bullets` (and `gameOver`) are reassigned each frame (filter/state machine),
-  // so these must be live getters, not object-literal snapshots of the initial value,
-  // or the exposed reference goes stale after the first frame.
+  // Expose minimal hooks for automated testing.
+  // NOTE: `bullets`/`phase`/`mode`/`winner` are reassigned over time (filter/state
+  // machine), so these must be live getters, not object-literal snapshots of the
+  // initial value, or the exposed reference goes stale after the first frame.
   window.__orbitDuel = {
     players,
     get bullets() { return bullets; },
-    get gameOver() { return gameOver; }
+    get phase() { return phase; },
+    get mode() { return mode; },
+    get winner() { return winner; },
+    get gameOver() { return phase === 'gameover'; }, // derived, back-compat with Cycle 1 checks
+    startGame,
+    // Routes through the SAME registerKill() the real bullet-collision path calls,
+    // so a test exercises the actual win transition/overlay/respawn wiring rather
+    // than flipping state flags directly.
+    awardKill(id) {
+      const victim = players.find(p => p.id !== id);
+      if (victim) registerKill(id, victim, performance.now() / 1000);
+    },
+    get aiDebug() { return players[1].ai; },
+    setAimJitter(n) { AI_AIM_JITTER = n; }
   };
 })();
 </script>
