@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Drift Maze</title>
+<style>
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: #10121a;
+    color: #e8e8f0;
+    font-family: system-ui, sans-serif;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+  }
+  #hud {
+    margin: 10px 0;
+    text-align: center;
+    line-height: 1.4;
+  }
+  #hud .title { font-size: 1.3em; font-weight: bold; }
+  #hud .legend { font-size: 0.85em; opacity: 0.75; max-width: 640px; }
+  canvas {
+    background: #1a1d29;
+    border: 2px solid #444a63;
+    border-radius: 6px;
+  }
+  #banner {
+    position: fixed;
+    top: 40%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(10, 12, 20, 0.92);
+    border: 2px solid #6ee7ff;
+    border-radius: 10px;
+    padding: 24px 36px;
+    text-align: center;
+    font-size: 1.4em;
+    display: none;
+  }
+  #banner.show { display: block; }
+  #banner .sub { font-size: 0.6em; opacity: 0.8; margin-top: 8px; }
+</style>
+</head>
+<body>
+  <div id="hud">
+    <div class="title" id="levelTitle">Drift Maze</div>
+    <div id="moveCount">Moves: 0</div>
+    <div class="legend">
+      Arrow keys / WASD to slide (keeps moving until you hit a wall). R: reset level.
+      B = breakable wall &middot; arrows = one-way gate &middot; matching numbers = teleport pads.
+    </div>
+  </div>
+  <canvas id="canvas" width="640" height="560"></canvas>
+  <div id="banner"></div>
+
+  <script src="drift-maze-logic.js"></script>
+  <script src="drift-maze-levels.js"></script>
+  <script>
+  (function () {
+    'use strict';
+
+    var TILE = 56;
+    var canvas = document.getElementById('canvas');
+    var ctx = canvas.getContext('2d');
+    var levelTitleEl = document.getElementById('levelTitle');
+    var moveCountEl = document.getElementById('moveCount');
+    var bannerEl = document.getElementById('banner');
+
+    var TILE_COLORS = {
+      '#': '#2c3040',
+      '.': '#1a1d29',
+      'B': '#7a5230',
+      'U': '#3a6b8a', 'D': '#3a6b8a', 'L': '#3a6b8a', 'R': '#3a6b8a',
+      '1': '#8a3a8a', '2': '#8a3a8a',
+      'E': '#2f8a4f',
+    };
+
+    var GATE_ARROW = { U: '↑', D: '↓', L: '←', R: '→' };
+
+    var state = {
+      levelIndex: 0,
+      level: null,
+      pos: null,
+      moves: 0,
+      solved: false,
+      animPath: null,   // array of {x,y} cells being tweened through, in canvas px
+      animStart: 0,
+      animDuration: 0,
+      pendingDir: null, // queued input received while an animation is in flight
+      cleared: false,   // all levels finished
+    };
+
+    function loadLevel(idx) {
+      var def = DRIFT_MAZE_LEVELS[idx];
+      var level = DriftMaze.parseLevel(def);
+      state.levelIndex = idx;
+      state.level = level;
+      state.pos = { x: level.start.x, y: level.start.y };
+      state.moves = 0;
+      state.solved = false;
+      state.animPath = null;
+      canvas.width = level.width * TILE;
+      canvas.height = level.height * TILE;
+      levelTitleEl.textContent = 'Level ' + (idx + 1) + ' / ' + DRIFT_MAZE_LEVELS.length + ' — ' + level.name;
+      updateHud();
+      hideBanner();
+      render();
+    }
+
+    function updateHud() {
+      var par = DRIFT_MAZE_LEVELS[state.levelIndex].par;
+      moveCountEl.textContent = 'Moves: ' + state.moves + (par ? ' (par ' + par + ')' : '');
+    }
+
+    function showBanner(html) {
+      bannerEl.innerHTML = html;
+      bannerEl.classList.add('show');
+    }
+    function hideBanner() {
+      bannerEl.classList.remove('show');
+    }
+
+    function cellCenter(x, y) {
+      return { px: x * TILE + TILE / 2, py: y * TILE + TILE / 2 };
+    }
+
+    function render() {
+      var level = state.level;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      for (var y = 0; y < level.height; y++) {
+        for (var x = 0; x < level.width; x++) {
+          var tile = level.grid[y][x];
+          ctx.fillStyle = TILE_COLORS[tile] || '#1a1d29';
+          ctx.fillRect(x * TILE, y * TILE, TILE - 1, TILE - 1);
+          if (GATE_ARROW[tile]) {
+            ctx.fillStyle = '#dff6ff';
+            ctx.font = (TILE * 0.5) + 'px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(GATE_ARROW[tile], x * TILE + TILE / 2, y * TILE + TILE / 2);
+          }
+          if (tile === '1' || tile === '2') {
+            ctx.fillStyle = '#f0d6ff';
+            ctx.font = 'bold ' + (TILE * 0.45) + 'px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(tile, x * TILE + TILE / 2, y * TILE + TILE / 2);
+          }
+        }
+      }
+
+      // player
+      var playerPx;
+      if (state.animPath && state.animPath.length > 1) {
+        var t = Math.min(1, (performance.now() - state.animStart) / state.animDuration);
+        var segCount = state.animPath.length - 1;
+        var segF = t * segCount;
+        var segI = Math.min(segCount - 1, Math.floor(segF));
+        var localT = segF - segI;
+        var a = state.animPath[segI], b = state.animPath[segI + 1];
+        var ac = cellCenter(a.x, a.y), bc = cellCenter(b.x, b.y);
+        playerPx = {
+          px: ac.px + (bc.px - ac.px) * localT,
+          py: ac.py + (bc.py - ac.py) * localT,
+        };
+      } else {
+        var c = cellCenter(state.pos.x, state.pos.y);
+        playerPx = c;
+      }
+      ctx.fillStyle = '#6ee7ff';
+      ctx.beginPath();
+      ctx.arc(playerPx.px, playerPx.py, TILE * 0.32, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    function isAnimating() {
+      return state.animPath && (performance.now() - state.animStart) < state.animDuration;
+    }
+
+    function finishAnimation() {
+      state.animPath = null;
+      if (state.pendingDir) {
+        var d = state.pendingDir;
+        state.pendingDir = null;
+        attemptMove(d);
+      }
+    }
+
+    function attemptMove(dir) {
+      if (state.solved || state.cleared) return;
+      if (isAnimating()) {
+        state.pendingDir = dir; // queue: apply once current tween finishes
+        return;
+      }
+      var level = state.level;
+      var result = DriftMaze.slide(level.grid, level.width, level.height, state.pos, dir);
+      if (!result.moved) return;
+
+      state.moves++;
+      var fullPath = [{ x: state.pos.x, y: state.pos.y }].concat(result.path);
+      state.pos = result.stoppedAt;
+      updateHud();
+
+      state.animPath = fullPath;
+      state.animStart = performance.now();
+      state.animDuration = Math.max(120, fullPath.length * 55);
+
+      if (result.hitExit) {
+        state.solved = true;
+        window.setTimeout(function () { onLevelSolved(); }, state.animDuration + 80);
+      }
+    }
+
+    function onLevelSolved() {
+      var isLast = state.levelIndex >= DRIFT_MAZE_LEVELS.length - 1;
+      if (isLast) {
+        state.cleared = true;
+        showBanner('All levels complete!<div class="sub">Press R to replay the last level.</div>');
+      } else {
+        showBanner('Level complete!<div class="sub">Moves: ' + state.moves + ' — next level in a moment&hellip;</div>');
+        window.setTimeout(function () { loadLevel(state.levelIndex + 1); }, 1100);
+      }
+    }
+
+    var KEY_DIR = {
+      ArrowUp: 'up', KeyW: 'up',
+      ArrowDown: 'down', KeyS: 'down',
+      ArrowLeft: 'left', KeyA: 'left',
+      ArrowRight: 'right', KeyD: 'right',
+    };
+
+    window.addEventListener('keydown', function (e) {
+      if (e.code === 'KeyR') {
+        loadLevel(state.levelIndex);
+        return;
+      }
+      var dir = KEY_DIR[e.code];
+      if (dir) {
+        e.preventDefault();
+        attemptMove(dir);
+      }
+    });
+
+    function loop() {
+      if (isAnimating()) {
+        render();
+      } else if (state.animPath) {
+        finishAnimation();
+        render();
+      }
+      requestAnimationFrame(loop);
+    }
+
+    loadLevel(0);
+    requestAnimationFrame(loop);
+
+    // Test hook: exposes read-only live state for automated smoke tests, mirroring
+    // the getter pattern used by Cycle 1's Orbit Duel prototype (a plain snapshot
+    // property would go stale since `state` fields are reassigned, not mutated in
+    // place).
+    window.__driftMaze = {
+      get levelIndex() { return state.levelIndex; },
+      get pos() { return state.pos; },
+      get moves() { return state.moves; },
+      get solved() { return state.solved; },
+      get cleared() { return state.cleared; },
+      attemptMove: attemptMove,
+      loadLevel: loadLevel,
+    };
+  })();
+  </script>
+</body>
+</html>
