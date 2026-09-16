@@ -2,8 +2,8 @@
   "cycle": 2,
   "cycleStarted": "2026-09-16T00:00:00Z",
   "lastUpdated": "2026-09-16T00:00:00Z",
-  "phase": "research",
-  "nextPhase": "design",
+  "phase": "design",
+  "nextPhase": "implementation",
   "selectedConcept": "Drift Maze",
   "checkpoints": [
     {
@@ -11,12 +11,18 @@
       "completedAt": "2026-09-16T00:15:00Z",
       "outputs": ["docs/cycle2-concepts.md"],
       "notes": "5 concepts brainstormed and scored (incl. an Orbit Duel AI-opponent evolution as a low-novelty baseline); Drift Maze (ice-slide grid puzzle) selected for full determinism / scriptable testability with no human playtester in the loop. Tidal Push was runner-up on novelty but higher edge-case risk."
+    },
+    {
+      "phase": "design",
+      "completedAt": "2026-09-16T00:30:00Z",
+      "outputs": ["docs/cycle2-design.md"],
+      "notes": "Turn-based grid architecture in a single self-contained game/drift-maze.html; pure slide() grid engine decoupled from rendering to enable BFS solvability checks + rule unit tests + an automated win-condition end-to-end test (addressing Cycle 1's biggest testing gap). 10-level hand-authored plan, escalating tile mechanics (walls -> breakable walls -> one-way gates -> teleport pads)."
     }
   ],
   "blockers": [],
   "followUps": [],
   "budgetNotes": "Cycle 2 starting. No subagent fan-out planned unless needed; keep implementation to a single self-contained HTML file as in Cycle 1 to preserve budget. Cycle 1's outputs renamed with a cycle1- prefix (docs) / moved to game/orbit-duel.html to preserve them for audit while cycle 2's game lives at game/drift-maze.html.",
-  "resumeInstructions": "Cycle 2 research phase complete with valid output (docs/cycle2-concepts.md, Drift Maze selected). Do not re-execute this phase. Resume at 'design' next: produce docs/cycle2-design.md.",
+  "resumeInstructions": "Cycle 2 research + design phases complete with valid outputs. Do not re-execute them. Resume at 'implementation' next: build game/drift-maze.html per docs/cycle2-design.md.",
   "history": [
     {
       "cycle": 1,
