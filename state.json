@@ -1,9 +1,9 @@
 {
   "cycle": 2,
   "cycleStarted": "2026-09-21T00:00:00Z",
-  "lastUpdated": "2026-09-21T00:10:00Z",
-  "phase": "design",
-  "nextPhase": "implementation",
+  "lastUpdated": "2026-09-21T01:05:00Z",
+  "phase": "done",
+  "nextPhase": "research",
   "selectedConcept": "Tether Twins",
   "previousCycles": [
     {
@@ -27,6 +27,18 @@
       "completedAt": "2026-09-21T00:25:00Z",
       "outputs": ["docs/cycle-2/design.md"],
       "notes": "Delegated to an Opus 5 subagent per pipeline instructions. Spring-tether physics (semi-implicit integration, circle-vs-rect collision), exact dual-input scheme (WASD/arrows resolved simultaneously per-frame), 3-level LEVELS data format with concrete layouts, win/hazard-reset/restart flow, 13 tunable constants, and a window.__tetherTwins test-hook spec (getters, not snapshot props -- explicitly avoids Cycle 1's test-hook staleness bug) with 4 planned Playwright assertions."
+    },
+    {
+      "phase": "implementation",
+      "completedAt": "2026-09-21T00:50:00Z",
+      "outputs": ["game/cycle-2-tether-twins/index.html"],
+      "notes": "Self-contained playable prototype per design.md: dual-orb spring-tether physics, 3 hand-authored levels (First Steps / The Spike Pit / Pinch Point), hazard-reset and level-clear/progression flow, window.__tetherTwins test hook + window.__tetherTwinsDebug (restartLevel/gotoLevel) for automated testing. No build step, no external deps."
+    },
+    {
+      "phase": "testing",
+      "completedAt": "2026-09-21T01:05:00Z",
+      "outputs": ["docs/cycle-2/test-results.md", "docs/cycle-2/test-tether-twins.spec.js"],
+      "notes": "Automated Playwright/headless-Chromium smoke tests: load/state hook, dual-input isolation (both directions), tether spring response (apart/together), and hazard-touch reset -- all PASS. No game bugs found; two test-script direction bugs (ambiguous separation axis, hazard targeting off to the side of start position) were found and fixed during testing. Level-clear end-to-end and human playtest/balance tuning are NOT covered by automated tests -- flagged as follow-up, matching Cycle 1's equivalent gap."
     }
   ],
   "cycle1Checkpoints": [
@@ -61,7 +73,12 @@
     "Consider a simple AI opponent or additional modes if this concept is revisited in a future cycle."
   ],
   "blockers": [],
-  "followUps": [],
-  "budgetNotes": "Cycle 1: single-session run, no subagent fan-out, completed fully within budget. Cycle 2: research done directly in-session (Sonnet 5); design phase to be delegated to an Opus 5 subagent per instructions; implementation/testing kept in-session to conserve budget.",
-  "resumeInstructions": "Cycle 1 is complete and preserved under previousCycles/cycle1Checkpoints -- never re-execute or overwrite its outputs (docs/concepts.md, docs/design.md, game/index.html, docs/test-results.md). Cycle 2 research is done (phase: research, nextPhase: design) with output docs/cycle-2/concepts.md; Tether Twins was selected. Resume at the design phase: produce docs/cycle-2/design.md (architecture/implementation plan for Tether Twins), then implementation (game/cycle-2-tether-twins/index.html) and testing (docs/cycle-2/test-results.md), checkpointing after each phase. If interrupted before design completes, restart the design phase (do not treat partial design docs as valid)."
+  "followUps": [
+    "Automated end-to-end test of Tether Twins' level-clear condition (both orbs resting on goal pads simultaneously) -- needs finer scripted input or a debug teleport-to-goal hook.",
+    "Human/manual playtest of Tether Twins for feel/balance tuning (TETHER_STIFFNESS, TETHER_DAMPING, ORB_THRUST, GRAVITY), especially whether 'Pinch Point' is a fair difficulty spike.",
+    "Cycle 1 follow-up still open: consider an Orbit Duel AI opponent or additional modes if that concept is revisited.",
+    "Cycle 1 follow-up still open: automated end-to-end test of Orbit Duel's win condition + restart flow."
+  ],
+  "budgetNotes": "Cycle 1: single-session run, no subagent fan-out, completed fully within budget. Cycle 2: research and implementation/testing done directly in-session (Sonnet 5); design phase delegated to one Opus 5 subagent per instructions (~42k subagent tokens). Completed fully within budget, no usage-limit warning encountered.",
+  "resumeInstructions": "Cycle 2 is complete (phase: done) with valid outputs at every checkpoint (docs/cycle-2/concepts.md, docs/cycle-2/design.md, game/cycle-2-tether-twins/index.html, docs/cycle-2/test-results.md + test-tether-twins.spec.js) -- do not re-execute cycle 2's phases. Cycle 1's outputs (docs/concepts.md, docs/design.md, game/index.html, docs/test-results.md) remain untouched and preserved under previousCycles/cycle1Checkpoints. On next invocation, start Cycle 3 at 'research': read docs/concepts.md and docs/cycle-2/concepts.md for prior art (avoid re-proposing Orbit Duel/Gravity Flip Runner/Color Bind/Signal Weaver/Chrono Loop/Tether Twins/Pulse Grid/Block Foundry/Echo Chamber verbatim; a genuine evolution of one is fine) and consider addressing the 'followUps' list above (e.g. Tether Twins' level-clear e2e test, or iterating on either prior concept) as one of the new cycle's candidates. Use a new docs/cycle-3/ and game/cycle-3-<slug>/ path pair; never write into game/index.html or game/cycle-2-tether-twins/."
 }

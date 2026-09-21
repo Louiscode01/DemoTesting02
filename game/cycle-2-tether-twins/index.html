@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Tether Twins</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #10131a;
+    color: #e8e8f0;
+    font-family: system-ui, sans-serif;
+    overflow: hidden;
+  }
+  #wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 12px;
+  }
+  canvas {
+    background: #181c26;
+    border: 1px solid #333a4a;
+    display: block;
+  }
+  #hud {
+    width: 800px;
+    display: flex;
+    justify-content: space-between;
+    font-size: 14px;
+    margin-bottom: 6px;
+    color: #aab0c0;
+  }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="hud">
+    <span id="hud-level">Level 1</span>
+    <span>Orb A: WASD &nbsp;|&nbsp; Orb B: Arrow Keys &nbsp;|&nbsp; R: Restart</span>
+  </div>
+  <canvas id="c" width="800" height="500"></canvas>
+</div>
+<script>
+(function () {
+  "use strict";
+
+  // ---------- Vector helpers ----------
+  function vAdd(a, b) { return { x: a.x + b.x, y: a.y + b.y }; }
+  function vSub(a, b) { return { x: a.x - b.x, y: a.y - b.y }; }
+  function vScale(a, s) { return { x: a.x * s, y: a.y * s }; }
+  function vLen(a) { return Math.sqrt(a.x * a.x + a.y * a.y); }
+  function vNorm(a) {
+    var l = vLen(a);
+    if (l < 1e-6) return { x: 0, y: 0 };
+    return { x: a.x / l, y: a.y / l };
+  }
+  function vDot(a, b) { return a.x * b.x + a.y * b.y; }
+  function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+  // Closest point on an axis-aligned rect to point p, plus distance.
+  function closestPointOnRect(p, rect) {
+    var cx = clamp(p.x, rect.x, rect.x + rect.w);
+    var cy = clamp(p.y, rect.y, rect.y + rect.h);
+    return { x: cx, y: cy };
+  }
+
+  function circleRectPenetration(orb, rect) {
+    var cp = closestPointOnRect(orb.pos, rect);
+    var d = vSub(orb.pos, cp);
+    var dist = vLen(d);
+    if (dist < ORB_RADIUS) {
+      var normal = dist > 1e-6 ? vScale(d, 1 / dist) : { x: 0, y: -1 };
+      return { hit: true, normal: normal, depth: ORB_RADIUS - dist };
+    }
+    return { hit: false };
+  }
+
+  // ---------- Tunable constants ----------
+  var TETHER_REST_LENGTH = 140;
+  var TETHER_STIFFNESS = 18;
+  var TETHER_DAMPING = 6;
+  var ORB_RADIUS = 12;
+  var ORB_THRUST = 900;
+  var ORB_DRAG = 1.6;
+  var GRAVITY = 260;
+  var MAX_SPEED = 700;
+  var WALL_RESTITUTION = 0.15;
+  var GOAL_REST_SPEED = 40;
+  var GOAL_HOLD_FRAMES = 30;
+  var CLEAR_OVERLAY_FRAMES = 90;
+  var MAX_DT = 1 / 30;
+
+  var CANVAS_W = 800, CANVAS_H = 500;
+
+  // ---------- Levels ----------
+  var LEVELS = [
+    {
+      name: "First Steps",
+      orbA: { x: 120, y: 250 },
+      orbB: { x: 80, y: 250 },
+      walls: [
+        { x: 380, y: 0, w: 40, h: 200 },
+        { x: 380, y: 300, w: 40, h: 200 }
+      ],
+      hazards: [],
+      goals: [
+        { x: 680, y: 200, w: 50, h: 50 },
+        { x: 680, y: 280, w: 50, h: 50 }
+      ]
+    },
+    {
+      name: "The Spike Pit",
+      orbA: { x: 100, y: 100 },
+      orbB: { x: 100, y: 160 },
+      walls: [
+        { x: 0, y: 220, w: 300, h: 20 },
+        { x: 500, y: 220, w: 300, h: 20 }
+      ],
+      hazards: [
+        { x: 300, y: 220, w: 200, h: 20 }
+      ],
+      goals: [
+        { x: 620, y: 160, w: 50, h: 50 },
+        { x: 620, y: 100, w: 50, h: 50 }
+      ]
+    },
+    {
+      name: "Pinch Point",
+      orbA: { x: 100, y: 200 },
+      orbB: { x: 100, y: 300 },
+      walls: [
+        { x: 350, y: 0, w: 30, h: 220 },
+        { x: 420, y: 280, w: 30, h: 220 }
+      ],
+      hazards: [
+        { x: 350, y: 220, w: 30, h: 60 },
+        { x: 420, y: 220, w: 30, h: 60 }
+      ],
+      goals: [
+        { x: 700, y: 120, w: 50, h: 50 },
+        { x: 700, y: 380, w: 50, h: 50 }
+      ]
+    }
+  ];
+
+  // ---------- World state ----------
+  var levelIndex = 0;
+  var orbs = null;         // [{pos, vel, acc}, {pos, vel, acc}]
+  var walls = [], hazards = [], goals = [];
+  var phase = "playing";   // 'playing' | 'levelClear' | 'gameComplete'
+  var goalHoldFrames = 0;
+  var clearOverlayTimer = 0;
+  var resets = 0;
+  var resetFlash = 0;
+
+  function loadLevel(idx) {
+    var lvl = LEVELS[idx];
+    orbs = [
+      { pos: { x: lvl.orbA.x, y: lvl.orbA.y }, vel: { x: 0, y: 0 }, acc: { x: 0, y: 0 } },
+      { pos: { x: lvl.orbB.x, y: lvl.orbB.y }, vel: { x: 0, y: 0 }, acc: { x: 0, y: 0 } }
+    ];
+    walls = lvl.walls.map(function (r) { return { x: r.x, y: r.y, w: r.w, h: r.h }; });
+    hazards = lvl.hazards.map(function (r) { return { x: r.x, y: r.y, w: r.w, h: r.h }; });
+    goals = lvl.goals.map(function (r) { return { x: r.x, y: r.y, w: r.w, h: r.h }; });
+    goalHoldFrames = 0;
+    phase = "playing";
+    clearOverlayTimer = 0;
+    document.getElementById("hud-level").textContent =
+      "Level " + (idx + 1) + " - " + lvl.name;
+  }
+
+  function restartLevel() { loadLevel(levelIndex); resets = 0; }
+
+  // ---------- Input ----------
+  var keys = Object.create(null);
+  window.addEventListener("keydown", function (e) {
+    if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", " ", "Spacebar"].indexOf(e.key) !== -1) {
+      e.preventDefault();
+    }
+    keys[e.code] = true;
+    if (e.code === "KeyR") {
+      if (phase === "gameComplete") { levelIndex = 0; }
+      loadLevel(levelIndex);
+    }
+    if (e.code === "KeyN") {
+      levelIndex = (levelIndex + 1) % LEVELS.length;
+      loadLevel(levelIndex);
+    }
+  }, { passive: false });
+  window.addEventListener("keyup", function (e) { keys[e.code] = false; });
+
+  function axisThrust(negKey, posKey) {
+    var v = 0;
+    if (keys[negKey]) v -= 1;
+    if (keys[posKey]) v += 1;
+    return v;
+  }
+
+  function computeThrust(negX, posX, negY, posY) {
+    var t = { x: axisThrust(negX, posX), y: axisThrust(negY, posY) };
+    var n = vNorm(t);
+    if (t.x === 0 && t.y === 0) return { x: 0, y: 0 };
+    return vScale(n, ORB_THRUST);
+  }
+
+  // ---------- Physics ----------
+  function physicsStep(dt) {
+    if (phase !== "playing") return;
+
+    var thrustA = computeThrust("KeyA", "KeyD", "KeyW", "KeyS");
+    var thrustB = computeThrust("ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown");
+
+    var A = orbs[0], B = orbs[1];
+    A.acc = vAdd(thrustA, { x: 0, y: GRAVITY });
+    B.acc = vAdd(thrustB, { x: 0, y: GRAVITY });
+
+    // Tether spring force
+    var d = vSub(B.pos, A.pos);
+    var len = Math.max(vLen(d), 1e-3);
+    var n = vScale(d, 1 / len);
+    var stretch = len - TETHER_REST_LENGTH;
+    var relVel = vDot(vSub(B.vel, A.vel), n);
+    var forceMag = TETHER_STIFFNESS * stretch + TETHER_DAMPING * relVel;
+    var force = vScale(n, forceMag);
+    A.acc = vAdd(A.acc, force);
+    B.acc = vSub(B.acc, force);
+
+    orbs.forEach(function (orb) {
+      orb.vel = vAdd(orb.vel, vScale(orb.acc, dt));
+      orb.vel = vScale(orb.vel, Math.max(0, 1 - ORB_DRAG * dt));
+      var speed = vLen(orb.vel);
+      if (speed > MAX_SPEED) orb.vel = vScale(orb.vel, MAX_SPEED / speed);
+      orb.pos = vAdd(orb.pos, vScale(orb.vel, dt));
+
+      // Canvas-edge walls
+      if (orb.pos.x - ORB_RADIUS < 0) { orb.pos.x = ORB_RADIUS; orb.vel.x = -orb.vel.x * WALL_RESTITUTION; }
+      if (orb.pos.x + ORB_RADIUS > CANVAS_W) { orb.pos.x = CANVAS_W - ORB_RADIUS; orb.vel.x = -orb.vel.x * WALL_RESTITUTION; }
+      if (orb.pos.y - ORB_RADIUS < 0) { orb.pos.y = ORB_RADIUS; orb.vel.y = -orb.vel.y * WALL_RESTITUTION; }
+      if (orb.pos.y + ORB_RADIUS > CANVAS_H) { orb.pos.y = CANVAS_H - ORB_RADIUS; orb.vel.y = -orb.vel.y * WALL_RESTITUTION; }
+
+      // Wall rects
+      walls.forEach(function (rect) {
+        var pen = circleRectPenetration(orb, rect);
+        if (pen.hit) {
+          orb.pos = vAdd(orb.pos, vScale(pen.normal, pen.depth));
+          var vn = vDot(orb.vel, pen.normal);
+          if (vn < 0) {
+            orb.vel = vSub(orb.vel, vScale(pen.normal, vn * (1 + WALL_RESTITUTION)));
+          }
+        }
+      });
+
+      // Hazards -> level reset
+      hazards.forEach(function (rect) {
+        var pen = circleRectPenetration(orb, rect);
+        if (pen.hit) {
+          resets++;
+          resetFlash = 20;
+          loadLevel(levelIndex);
+        }
+      });
+    });
+
+    if (phase !== "playing") return;
+
+    // Goal test
+    var aIn = pointInRect(orbs[0].pos, goals[0]) && vLen(orbs[0].vel) < GOAL_REST_SPEED;
+    var bIn = pointInRect(orbs[1].pos, goals[1]) && vLen(orbs[1].vel) < GOAL_REST_SPEED;
+    if (aIn && bIn) {
+      goalHoldFrames++;
+      if (goalHoldFrames >= GOAL_HOLD_FRAMES) {
+        phase = "levelClear";
+        clearOverlayTimer = CLEAR_OVERLAY_FRAMES;
+      }
+    } else {
+      goalHoldFrames = 0;
+    }
+
+    if (resetFlash > 0) resetFlash--;
+  }
+
+  function pointInRect(p, r) {
+    return p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h;
+  }
+
+  function updateOverlayPhase() {
+    if (phase === "levelClear") {
+      clearOverlayTimer--;
+      if (clearOverlayTimer <= 0) {
+        if (levelIndex + 1 < LEVELS.length) {
+          levelIndex++;
+          loadLevel(levelIndex);
+        } else {
+          phase = "gameComplete";
+        }
+      }
+    }
+  }
+
+  // ---------- Render ----------
+  var canvas = document.getElementById("c");
+  var ctx = canvas.getContext("2d");
+
+  function draw() {
+    ctx.fillStyle = "#181c26";
+    ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+
+    ctx.fillStyle = "#3a4256";
+    walls.forEach(function (r) { ctx.fillRect(r.x, r.y, r.w, r.h); });
+
+    ctx.fillStyle = "#c0392b";
+    hazards.forEach(function (r) {
+      ctx.fillRect(r.x, r.y, r.w, r.h);
+      ctx.fillStyle = "#e74c3c";
+      var teeth = Math.max(2, Math.floor(r.w / 12));
+      for (var i = 0; i < teeth; i++) {
+        var tx = r.x + (i + 0.5) * (r.w / teeth);
+        ctx.beginPath();
+        ctx.moveTo(tx - 5, r.y);
+        ctx.lineTo(tx + 5, r.y);
+        ctx.lineTo(tx, r.y - 8);
+        ctx.closePath();
+        ctx.fill();
+      }
+      ctx.fillStyle = "#c0392b";
+    });
+
+    var fillFrac = clamp(goalHoldFrames / GOAL_HOLD_FRAMES, 0, 1);
+    goals.forEach(function (r, i) {
+      ctx.strokeStyle = i === 0 ? "#5ad1e6" : "#e65ad1";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(r.x, r.y, r.w, r.h);
+      ctx.globalAlpha = 0.35 * fillFrac;
+      ctx.fillStyle = ctx.strokeStyle;
+      ctx.fillRect(r.x, r.y, r.w, r.h);
+      ctx.globalAlpha = 1;
+    });
+
+    if (orbs) {
+      var A = orbs[0], B = orbs[1];
+      var len = vLen(vSub(B.pos, A.pos));
+      var t = clamp(len / TETHER_REST_LENGTH, 0, 2) / 2;
+      var r1 = Math.round(80 + t * (255 - 80));
+      var g1 = Math.round(170 - t * 100);
+      var b1 = Math.round(230 - t * 180);
+      ctx.strokeStyle = "rgb(" + r1 + "," + g1 + "," + b1 + ")";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(A.pos.x, A.pos.y);
+      ctx.lineTo(B.pos.x, B.pos.y);
+      ctx.stroke();
+
+      ctx.fillStyle = "#5ad1e6";
+      ctx.beginPath();
+      ctx.arc(A.pos.x, A.pos.y, ORB_RADIUS, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = "#e65ad1";
+      ctx.beginPath();
+      ctx.arc(B.pos.x, B.pos.y, ORB_RADIUS, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    if (resetFlash > 0) {
+      ctx.fillStyle = "rgba(231,76,60," + (resetFlash / 40) + ")";
+      ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+    }
+
+    if (phase === "levelClear") {
+      overlayText("Level Clear!");
+    } else if (phase === "gameComplete") {
+      overlayText("All Levels Complete! Press R to restart");
+    }
+  }
+
+  function overlayText(msg) {
+    ctx.fillStyle = "rgba(10,12,18,0.6)";
+    ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+    ctx.fillStyle = "#fff";
+    ctx.font = "28px system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText(msg, CANVAS_W / 2, CANVAS_H / 2);
+    ctx.textAlign = "left";
+  }
+
+  // ---------- Game loop ----------
+  var lastTime = null;
+  function frame(ts) {
+    if (lastTime === null) lastTime = ts;
+    var dt = Math.min((ts - lastTime) / 1000, MAX_DT);
+    lastTime = ts;
+
+    physicsStep(dt);
+    updateOverlayPhase();
+    draw();
+
+    requestAnimationFrame(frame);
+  }
+
+  loadLevel(0);
+  requestAnimationFrame(frame);
+
+  // ---------- Test hook ----------
+  Object.defineProperty(window, "__tetherTwins", {
+    get: function () {
+      return {
+        orbA: orbs ? { x: orbs[0].pos.x, y: orbs[0].pos.y, vx: orbs[0].vel.x, vy: orbs[0].vel.y } : null,
+        orbB: orbs ? { x: orbs[1].pos.x, y: orbs[1].pos.y, vx: orbs[1].vel.x, vy: orbs[1].vel.y } : null,
+        get tetherLength() {
+          return orbs ? vLen(vSub(orbs[1].pos, orbs[0].pos)) : 0;
+        },
+        levelIndex: levelIndex,
+        levelName: LEVELS[levelIndex].name,
+        goalHoldFrames: goalHoldFrames,
+        phase: phase,
+        resets: resets,
+        constants: {
+          TETHER_REST_LENGTH: TETHER_REST_LENGTH,
+          TETHER_STIFFNESS: TETHER_STIFFNESS,
+          TETHER_DAMPING: TETHER_DAMPING,
+          ORB_RADIUS: ORB_RADIUS,
+          ORB_THRUST: ORB_THRUST,
+          ORB_DRAG: ORB_DRAG,
+          GRAVITY: GRAVITY,
+          MAX_SPEED: MAX_SPEED,
+          WALL_RESTITUTION: WALL_RESTITUTION,
+          GOAL_REST_SPEED: GOAL_REST_SPEED,
+          GOAL_HOLD_FRAMES: GOAL_HOLD_FRAMES,
+          CLEAR_OVERLAY_FRAMES: CLEAR_OVERLAY_FRAMES,
+          MAX_DT: MAX_DT
+        }
+      };
+    },
+    configurable: true
+  });
+
+  window.__tetherTwinsDebug = {
+    restartLevel: restartLevel,
+    gotoLevel: function (i) { levelIndex = i; loadLevel(i); }
+  };
+})();
+</script>
+</body>
+</html>
