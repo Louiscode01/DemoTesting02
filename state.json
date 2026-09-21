@@ -2,8 +2,8 @@
   "cycle": 2,
   "cycleStarted": "2026-09-21T00:00:00Z",
   "lastUpdated": "2026-09-21T00:10:00Z",
-  "phase": "research",
-  "nextPhase": "design",
+  "phase": "design",
+  "nextPhase": "implementation",
   "selectedConcept": "Tether Twins",
   "previousCycles": [
     {
@@ -21,6 +21,12 @@
       "completedAt": "2026-09-21T00:10:00Z",
       "outputs": ["docs/cycle-2/concepts.md"],
       "notes": "5 concepts brainstormed (avoiding Cycle 1 duplicates) and scored; Tether Twins selected, Pulse Grid as fallback."
+    },
+    {
+      "phase": "design",
+      "completedAt": "2026-09-21T00:25:00Z",
+      "outputs": ["docs/cycle-2/design.md"],
+      "notes": "Delegated to an Opus 5 subagent per pipeline instructions. Spring-tether physics (semi-implicit integration, circle-vs-rect collision), exact dual-input scheme (WASD/arrows resolved simultaneously per-frame), 3-level LEVELS data format with concrete layouts, win/hazard-reset/restart flow, 13 tunable constants, and a window.__tetherTwins test-hook spec (getters, not snapshot props -- explicitly avoids Cycle 1's test-hook staleness bug) with 4 planned Playwright assertions."
     }
   ],
   "cycle1Checkpoints": [
