@@ -1,9 +1,9 @@
 {
   "cycle": 2,
   "cycleStarted": "2026-09-22T00:00:00Z",
-  "lastUpdated": "2026-09-22T00:15:00Z",
-  "phase": "research",
-  "nextPhase": "design",
+  "lastUpdated": "2026-09-22T00:30:00Z",
+  "phase": "design",
+  "nextPhase": "implementation",
   "selectedConcept": "Photon Reflect",
   "checkpoints": [
     {
@@ -11,12 +11,19 @@
       "completedAt": "2026-09-22T00:15:00Z",
       "outputs": ["docs/cycle2/concepts.md"],
       "notes": "5 concepts brainstormed and scored (added a testability criterion this cycle, motivated by Cycle 1's untested win-condition gap). Photon Reflect (grid laser-reflection puzzle, procedurally generated + solvability-checked) selected; Orbit Duel: AI Rival kept as runner-up/fallback."
+    },
+    {
+      "phase": "design",
+      "completedAt": "2026-09-22T00:30:00Z",
+      "outputs": ["docs/cycle2/design.md"],
+      "notes": "Pure-function core (simulate() beam physics, generateLevel() with backward-from-solution generation + solvability check) separated from render/input/DOM, single-file HTML5 canvas architecture (game/cycle2/index.html), test hook pattern reused from Cycle 1 (getters for reassigned refs). Testing plan explicitly targets closing Cycle 1's win-condition-not-automated gap via a scripted-solution E2E test."
     }
   ],
   "blockers": [],
   "followUps": [
-    "Cycle 1 follow-ups still open and deferred to a future cycle: human/manual playtest of Orbit Duel for feel/balance tuning; consider an AI opponent for Orbit Duel (candidate 'Orbit Duel: AI Rival' was scored this cycle and lost narrowly to Photon Reflect -- good pick for Cycle 3 if revisited)."
+    "Cycle 1 follow-ups still open and deferred to a future cycle: human/manual playtest of Orbit Duel for feel/balance tuning; 'Orbit Duel: AI Rival' remains a good Cycle 3 candidate.",
+    "Photon Reflect: human/manual fun-tuning of generated level difficulty is out of scope for this pass (flagged in design.md), same category of gap as Cycle 1's physics feel-tuning."
   ],
-  "budgetNotes": "Cycle 2 started single-session, no subagent fan-out, consistent with Cycle 1's budget-conservation approach. Research phase completed directly in-session (Sonnet 5, matching guidance to use Sonnet 5 for creative exploration).",
-  "resumeInstructions": "Cycle 2 phase 'research' is complete with a valid output (docs/cycle2/concepts.md) -- do not re-run it. Resume at 'design': produce docs/cycle2/design.md for Photon Reflect (grid size, tile types incl. mirrors/splitters, move-limit rule, level generator + solvability checker, single-file HTML5 canvas architecture matching Cycle 1's no-build-step/no-external-deps pattern), then implement game/cycle2/index.html, then automated tests documented in docs/cycle2/test-results.md. Keep Cycle 1's outputs (docs/concepts.md, docs/design.md, docs/test-results.md, game/index.html) untouched for audit trail; all Cycle 2 outputs live under the cycle2/ subfolders."
+  "budgetNotes": "Cycle 2 single-session, no subagent fan-out, consistent with Cycle 1. Research + design both completed directly in-session under the currently-running model rather than spawning a separate Opus agent for design, to conserve budget -- design doc was still written with the same rigor (explicit architecture, algorithms, and a testing plan up front).",
+  "resumeInstructions": "Cycle 2 phases 'research' and 'design' are complete with valid outputs (docs/cycle2/concepts.md, docs/cycle2/design.md) -- do not re-run them. Resume at 'implementation': build game/cycle2/index.html per docs/cycle2/design.md (pure simulate()/generateLevel() core + canvas render + click input + window.__photonReflect test hook), then test per the design doc's testing plan and record results in docs/cycle2/test-results.md. Keep Cycle 1's outputs untouched for audit trail; all Cycle 2 outputs live under the cycle2/ subfolders."
 }
