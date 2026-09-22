@@ -1,9 +1,9 @@
 {
   "cycle": 2,
   "cycleStarted": "2026-09-22T00:00:00Z",
-  "lastUpdated": "2026-09-22T00:30:00Z",
-  "phase": "design",
-  "nextPhase": "implementation",
+  "lastUpdated": "2026-09-22T01:15:00Z",
+  "phase": "done",
+  "nextPhase": "research",
   "selectedConcept": "Photon Reflect",
   "checkpoints": [
     {
@@ -17,13 +17,26 @@
       "completedAt": "2026-09-22T00:30:00Z",
       "outputs": ["docs/cycle2/design.md"],
       "notes": "Pure-function core (simulate() beam physics, generateLevel() with backward-from-solution generation + solvability check) separated from render/input/DOM, single-file HTML5 canvas architecture (game/cycle2/index.html), test hook pattern reused from Cycle 1 (getters for reassigned refs). Testing plan explicitly targets closing Cycle 1's win-condition-not-automated gap via a scripted-solution E2E test."
+    },
+    {
+      "phase": "implementation",
+      "completedAt": "2026-09-22T01:00:00Z",
+      "outputs": ["game/cycle2/index.html"],
+      "notes": "Self-contained playable prototype: Photon Reflect grid laser-puzzle, no build step, no external assets/deps. Pure logic (simulate/generateLevel/isSolved) exposed via window.__photonReflect test hook alongside live getters (grid/level/litCells/solved/failed/placementsUsed), matching Cycle 1's getter pattern for reassigned references."
+    },
+    {
+      "phase": "testing",
+      "completedAt": "2026-09-22T01:15:00Z",
+      "outputs": ["docs/cycle2/test-results.md"],
+      "notes": "Automated Playwright/headless-Chromium tests, all PASS: load smoke test, 6/6 simulate() unit tests (straight pass, both mirror orientations, splitter, wall block, infinite-loop guard), generateLevel() solvability sanity across 300 seeds (0 failures), end-to-end WIN test via scripted replay of the generator's own solution, end-to-end LOSE test + reset. This closes Cycle 1's flagged gap: win condition is now exercised end-to-end by an automated test, not just code review."
     }
   ],
   "blockers": [],
   "followUps": [
-    "Cycle 1 follow-ups still open and deferred to a future cycle: human/manual playtest of Orbit Duel for feel/balance tuning; 'Orbit Duel: AI Rival' remains a good Cycle 3 candidate.",
-    "Photon Reflect: human/manual fun-tuning of generated level difficulty is out of scope for this pass (flagged in design.md), same category of gap as Cycle 1's physics feel-tuning."
+    "Photon Reflect: human/manual fun-tuning of generated level difficulty (constants: grid size, MIN/MAX_SOLUTION, MIN/MAX_TARGETS, EXTRA_EDITABLE decoys) not yet human-playtested -- top candidate follow-up if this concept is revisited.",
+    "Photon Reflect: consider a level-select/progression system (currently one generated level + 'New Level' button, no difficulty curve) if revisited.",
+    "Cycle 1 follow-ups still open and deferred: human/manual playtest of Orbit Duel for feel/balance tuning; 'Orbit Duel: AI Rival' remains a good future-cycle candidate (scored 2nd in this cycle's evaluation)."
   ],
-  "budgetNotes": "Cycle 2 single-session, no subagent fan-out, consistent with Cycle 1. Research + design both completed directly in-session under the currently-running model rather than spawning a separate Opus agent for design, to conserve budget -- design doc was still written with the same rigor (explicit architecture, algorithms, and a testing plan up front).",
-  "resumeInstructions": "Cycle 2 phases 'research' and 'design' are complete with valid outputs (docs/cycle2/concepts.md, docs/cycle2/design.md) -- do not re-run them. Resume at 'implementation': build game/cycle2/index.html per docs/cycle2/design.md (pure simulate()/generateLevel() core + canvas render + click input + window.__photonReflect test hook), then test per the design doc's testing plan and record results in docs/cycle2/test-results.md. Keep Cycle 1's outputs untouched for audit trail; all Cycle 2 outputs live under the cycle2/ subfolders."
+  "budgetNotes": "Cycle 2 completed single-session, no subagent fan-out, consistent with Cycle 1's budget-conservation approach. All four phases (research/design/implementation/testing) done directly in-session under the currently-running model rather than spawning separate agents per phase, to conserve budget while still following the phase structure and producing rigorous per-phase docs. No usage-limit warning encountered during this cycle.",
+  "resumeInstructions": "Cycle 2 is complete (phase: done) with valid outputs at every checkpoint -- do not re-execute cycle 2's research/design/implementation/testing phases. On next invocation, start Cycle 3 at 'research': read docs/cycle2/concepts.md for prior art (avoid re-proposing Photon Reflect/Word Drift/Echo Maze/Stack Defense/Orbit Duel: AI Rival verbatim; a genuine evolution of one is fine) and consider addressing the 'followUps' list above (Photon Reflect difficulty tuning, or finally picking up 'Orbit Duel: AI Rival') as one of the new cycle's candidate concepts. Keep Cycle 1 (docs/concepts.md, docs/design.md, docs/test-results.md, game/index.html) and Cycle 2 (docs/cycle2/*, game/cycle2/index.html) outputs untouched for audit trail; Cycle 3 outputs should go under a new cycle3/ subfolder following the same pattern."
 }

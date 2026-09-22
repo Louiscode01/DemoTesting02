@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Photon Reflect</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: #0b0e14; color: #e6e9ef;
+    font-family: system-ui, -apple-system, Segoe UI, sans-serif;
+    display: flex; flex-direction: column; align-items: center;
+  }
+  h1 { margin: 16px 0 4px; font-size: 20px; letter-spacing: 0.04em; }
+  #hud { display: flex; gap: 24px; margin-bottom: 8px; font-size: 14px; }
+  #hud span.label { color: #8892a6; }
+  #banner {
+    min-height: 22px; font-weight: 600; font-size: 15px; margin-bottom: 6px;
+  }
+  #banner.win { color: #5be48a; }
+  #banner.lose { color: #f06868; }
+  #controls { margin-bottom: 14px; display: flex; gap: 10px; }
+  button {
+    background: #1b2130; color: #e6e9ef; border: 1px solid #333c52;
+    padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px;
+  }
+  button:hover { background: #262e42; }
+  canvas { background: #10141d; border: 1px solid #2a3145; border-radius: 6px; }
+  #hint { font-size: 12px; color: #6b7488; margin-top: 10px; max-width: 480px; text-align: center; }
+</style>
+</head>
+<body>
+  <h1>PHOTON REFLECT</h1>
+  <div id="hud">
+    <div><span class="label">Placements left:</span> <span id="placementsLeft">-</span></div>
+    <div><span class="label">Targets lit:</span> <span id="targetsLit">-</span></div>
+  </div>
+  <div id="banner"></div>
+  <div id="controls">
+    <button id="resetBtn">Reset Level</button>
+    <button id="newBtn">New Level</button>
+  </div>
+  <canvas id="c" width="500" height="400"></canvas>
+  <div id="hint">Click an empty editable cell to cycle: empty &rarr; / mirror &rarr; \ mirror
+    &rarr; splitter &rarr; empty. Light every target with at most the allowed placements.</div>
+
+<script>
+(function () {
+  "use strict";
+
+  // ---------- Tunable constants ----------
+  const COLS = 10, ROWS = 8, CELL = 50;
+  const MIN_TARGETS = 2, MAX_TARGETS = 4;
+  const MIN_SOLUTION = 2, MAX_SOLUTION = 4;
+  const EXTRA_EDITABLE = 6; // decoy empty cells also made editable
+  const GEN_RETRY_LIMIT = 200;
+
+  // Cell types
+  const EMPTY = "empty", WALL = "wall", EMITTER = "emitter", TARGET = "target",
+        MIRROR_FS = "mirror-/", MIRROR_BS = "mirror-\\", SPLITTER = "splitter";
+
+  // Directions as [dx, dy]
+  const DIR = { N: [0, -1], S: [0, 1], E: [1, 0], W: [-1, 0] };
+  const OPPOSITE_TURN_FS = { N: "E", E: "N", S: "W", W: "S" }; // '/' mirror reflection
+  const OPPOSITE_TURN_BS = { N: "W", W: "N", S: "E", E: "S" }; // '\' mirror reflection
+  const SPLIT_MAP = { N: ["E", "W"], S: ["E", "W"], E: ["N", "S"], W: ["N", "S"] };
+
+  function key(x, y) { return x + "," + y; }
+
+  // ---------- Pure core: grid helpers ----------
+  function makeEmptyGrid() {
+    const grid = [];
+    for (let y = 0; y < ROWS; y++) {
+      const row = [];
+      for (let x = 0; x < COLS; x++) row.push({ type: EMPTY, editable: false });
+      grid.push(row);
+    }
+    return grid;
+  }
+
+  function cloneGrid(grid) {
+    return grid.map(row => row.map(cell => ({ ...cell })));
+  }
+
+  // ---------- Pure core: beam simulation ----------
+  // simulate(grid, emitter) -> { litCells: Set<"x,y">, path: [{x,y}], hitTargets: Set<"x,y"> }
+  function simulate(grid, emitter) {
+    const litCells = new Set();
+    const hitTargets = new Set();
+    const path = [];
+    const visitedStates = new Set();
+
+    let heads = [{ x: emitter.x, y: emitter.y, dir: emitter.dir }];
+    // step forward before first cell check (emitter cell itself is not "in" the grid beam path)
+    const MAX_STEPS = COLS * ROWS * 4 + 50;
+    let steps = 0;
+
+    let queue = [...heads];
+    while (queue.length && steps < MAX_STEPS) {
+      const head = queue.shift();
+      steps++;
+      const [dx, dy] = DIR[head.dir];
+      const nx = head.x + dx, ny = head.y + dy;
+      if (nx < 0 || nx >= COLS || ny < 0 || ny >= ROWS) continue; // beam exits arena
+
+      const stateKey = nx + "," + ny + ":" + head.dir;
+      if (visitedStates.has(stateKey)) continue; // loop guard
+      visitedStates.add(stateKey);
+
+      const cell = grid[ny][nx];
+      if (cell.type === WALL) continue; // absorbed
+
+      litCells.add(key(nx, ny));
+      path.push({ x: nx, y: ny });
+
+      if (cell.type === TARGET) hitTargets.add(key(nx, ny));
+
+      if (cell.type === MIRROR_FS) {
+        queue.push({ x: nx, y: ny, dir: OPPOSITE_TURN_FS[head.dir] });
+      } else if (cell.type === MIRROR_BS) {
+        queue.push({ x: nx, y: ny, dir: OPPOSITE_TURN_BS[head.dir] });
+      } else if (cell.type === SPLITTER) {
+        for (const d of SPLIT_MAP[head.dir]) queue.push({ x: nx, y: ny, dir: d });
+      } else {
+        // empty, emitter (shouldn't recur), target: beam continues straight through
+        queue.push({ x: nx, y: ny, dir: head.dir });
+      }
+    }
+
+    return { litCells, path, hitTargets };
+  }
+
+  function isSolved(grid, emitter, targets) {
+    const { hitTargets } = simulate(grid, emitter);
+    return targets.every(t => hitTargets.has(key(t.x, t.y)));
+  }
+
+  // ---------- Pure core: level generation ----------
+  function randInt(rng, n) { return Math.floor(rng() * n); }
+
+  function mulberry32(seed) {
+    let a = seed >>> 0;
+    return function () {
+      a |= 0; a = (a + 0x6D2B79F5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  function pickEmitter(rng) {
+    // choose an edge cell + inward direction
+    const side = randInt(rng, 4);
+    if (side === 0) return { x: 0, y: 1 + randInt(rng, ROWS - 2), dir: "E" };
+    if (side === 1) return { x: COLS - 1, y: 1 + randInt(rng, ROWS - 2), dir: "W" };
+    if (side === 2) return { x: 1 + randInt(rng, COLS - 2), y: 0, dir: "S" };
+    return { x: 1 + randInt(rng, COLS - 2), y: ROWS - 1, dir: "N" };
+  }
+
+  function generateLevel(seed) {
+    const rng = mulberry32(seed);
+    for (let attempt = 0; attempt < GEN_RETRY_LIMIT; attempt++) {
+      const grid = makeEmptyGrid();
+      const emitter = pickEmitter(rng);
+      grid[emitter.y][emitter.x] = { type: EMITTER, editable: false, dir: emitter.dir };
+
+      const solutionCount = MIN_SOLUTION + randInt(rng, MAX_SOLUTION - MIN_SOLUTION + 1);
+      const solutionCells = [];
+      const solutionTypes = [MIRROR_FS, MIRROR_BS, SPLITTER];
+      let tries = 0;
+      while (solutionCells.length < solutionCount && tries < 200) {
+        tries++;
+        const x = randInt(rng, COLS), y = randInt(rng, ROWS);
+        if (grid[y][x].type !== EMPTY) continue;
+        if (x === emitter.x && y === emitter.y) continue;
+        const type = solutionTypes[randInt(rng, solutionTypes.length)];
+        grid[y][x] = { type, editable: true };
+        solutionCells.push({ x, y, type });
+      }
+      if (solutionCells.length < solutionCount) continue; // couldn't place, retry
+
+      const { litCells: solutionLit } = simulate(grid, emitter);
+      const candidateTargets = [...solutionLit].filter(k => {
+        const [x, y] = k.split(",").map(Number);
+        return !(x === emitter.x && y === emitter.y) &&
+               !solutionCells.some(s => s.x === x && s.y === y);
+      });
+      if (candidateTargets.length < MIN_TARGETS) continue;
+
+      const targetCount = Math.min(MAX_TARGETS,
+        MIN_TARGETS + randInt(rng, candidateTargets.length - MIN_TARGETS + 1));
+      const shuffled = candidateTargets
+        .map(k => ({ k, r: rng() }))
+        .sort((a, b) => a.r - b.r)
+        .slice(0, targetCount)
+        .map(o => o.k);
+
+      const targets = shuffled.map(k => {
+        const [x, y] = k.split(",").map(Number);
+        return { x, y };
+      });
+
+      // Build the actual puzzle grid: solution mirrors removed, targets fixed in place.
+      const puzzleGrid = makeEmptyGrid();
+      puzzleGrid[emitter.y][emitter.x] = { type: EMITTER, editable: false, dir: emitter.dir };
+      for (const t of targets) puzzleGrid[t.y][t.x] = { type: TARGET, editable: false };
+
+      // Sanity check 1: empty puzzle grid must NOT already be solved.
+      if (isSolved(puzzleGrid, emitter, targets)) continue;
+
+      // Mark editable cells: the solution cells + extra decoys, all currently empty.
+      const editableSet = new Set(solutionCells.map(s => key(s.x, s.y)));
+      let decoyTries = 0;
+      while (editableSet.size < solutionCells.length + EXTRA_EDITABLE && decoyTries < 300) {
+        decoyTries++;
+        const x = randInt(rng, COLS), y = randInt(rng, ROWS);
+        if (puzzleGrid[y][x].type !== EMPTY) continue;
+        editableSet.add(key(x, y));
+      }
+      for (const k of editableSet) {
+        const [x, y] = k.split(",").map(Number);
+        puzzleGrid[y][x].editable = true;
+      }
+
+      // Sanity check 2: restoring the solution mirrors onto the puzzle grid must solve it.
+      const verifyGrid = cloneGrid(puzzleGrid);
+      for (const s of solutionCells) verifyGrid[s.y][s.x] = { type: s.type, editable: true };
+      if (!isSolved(verifyGrid, emitter, targets)) continue;
+
+      return {
+        grid: puzzleGrid,
+        emitter,
+        targets,
+        maxPlacements: solutionCells.length,
+        seed,
+        _solution: solutionCells, // test-only: not surfaced as a UI hint
+      };
+    }
+    // Fallback: hand-authored level, guaranteed solvable, used if generation keeps failing.
+    return handAuthoredFallback();
+  }
+
+  function handAuthoredFallback() {
+    // Guaranteed-solvable level, used only if generateLevel() exhausts its retry budget.
+    // Emitter fires east along row 4; without the mirror the beam exits the arena and
+    // never reaches the target (verified: target is off the emitter's straight path).
+    const grid = makeEmptyGrid();
+    const emitter = { x: 0, y: 4, dir: "E" };
+    grid[4][0] = { type: EMITTER, editable: false, dir: "E" };
+    grid[1][4] = { type: TARGET, editable: false };
+    grid[4][4] = { type: EMPTY, editable: true };  // solution: '/' mirror turns E-beam to N
+    grid[6][7] = { type: EMPTY, editable: true };  // decoy editable cell
+    return {
+      grid, emitter,
+      targets: [{ x: 4, y: 1 }],
+      maxPlacements: 1,
+      seed: -1,
+      _solution: [{ x: 4, y: 4, type: MIRROR_FS }],
+    };
+  }
+
+  // ---------- Game state ----------
+  let level = null;
+  let grid = null;
+  let placementsUsed = 0;
+  let solved = false;
+  let failed = false;
+  let litCellsCache = new Set();
+
+  const CYCLE_TYPES = [EMPTY, MIRROR_FS, MIRROR_BS, SPLITTER];
+
+  function loadLevel(seed) {
+    level = generateLevel(seed);
+    grid = cloneGrid(level.grid);
+    placementsUsed = 0;
+    solved = false;
+    failed = false;
+    recompute();
+  }
+
+  function countPlaced() {
+    let n = 0;
+    for (let y = 0; y < ROWS; y++)
+      for (let x = 0; x < COLS; x++)
+        if (grid[y][x].editable && grid[y][x].type !== EMPTY) n++;
+    return n;
+  }
+
+  function recompute() {
+    const { litCells, hitTargets } = simulate(grid, level.emitter);
+    litCellsCache = litCells;
+    placementsUsed = countPlaced();
+    const allLit = level.targets.every(t => hitTargets.has(key(t.x, t.y)));
+    solved = allLit;
+    failed = !allLit && placementsUsed >= level.maxPlacements;
+    render();
+  }
+
+  function cycleCell(x, y) {
+    if (solved) return;
+    const cell = grid[y][x];
+    if (!cell.editable) return;
+    const curIdx = CYCLE_TYPES.indexOf(cell.type);
+    const placingNew = cell.type === EMPTY;
+    if (placingNew && placementsUsed >= level.maxPlacements) return; // out of placements
+    const nextType = CYCLE_TYPES[(curIdx + 1) % CYCLE_TYPES.length];
+    grid[y][x] = { type: nextType, editable: true };
+    recompute();
+  }
+
+  // ---------- Rendering ----------
+  const canvas = document.getElementById("c");
+  const ctx = canvas.getContext("2d");
+  const placementsLeftEl = document.getElementById("placementsLeft");
+  const targetsLitEl = document.getElementById("targetsLit");
+  const bannerEl = document.getElementById("banner");
+
+  function render() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.strokeStyle = "#232b3d";
+    for (let x = 0; x <= COLS; x++) {
+      ctx.beginPath(); ctx.moveTo(x * CELL, 0); ctx.lineTo(x * CELL, ROWS * CELL); ctx.stroke();
+    }
+    for (let y = 0; y <= ROWS; y++) {
+      ctx.beginPath(); ctx.moveTo(0, y * CELL); ctx.lineTo(COLS * CELL, y * CELL); ctx.stroke();
+    }
+
+    // lit-cell glow
+    ctx.fillStyle = "rgba(255, 210, 80, 0.18)";
+    for (const k of litCellsCache) {
+      const [x, y] = k.split(",").map(Number);
+      ctx.fillRect(x * CELL, y * CELL, CELL, CELL);
+    }
+
+    for (let y = 0; y < ROWS; y++) {
+      for (let x = 0; x < COLS; x++) {
+        drawCell(x, y, grid[y][x]);
+      }
+    }
+
+    const hitCount = level.targets.filter(t => litCellsCache.has(key(t.x, t.y))).length;
+    placementsLeftEl.textContent = Math.max(0, level.maxPlacements - placementsUsed);
+    targetsLitEl.textContent = hitCount + " / " + level.targets.length;
+
+    if (solved) {
+      bannerEl.textContent = "SOLVED!";
+      bannerEl.className = "win";
+    } else if (failed) {
+      bannerEl.textContent = "OUT OF PLACEMENTS — press Reset";
+      bannerEl.className = "lose";
+    } else {
+      bannerEl.textContent = "";
+      bannerEl.className = "";
+    }
+  }
+
+  function drawCell(x, y, cell) {
+    const cx = x * CELL + CELL / 2, cy = y * CELL + CELL / 2;
+    if (cell.type === WALL) {
+      ctx.fillStyle = "#3a4256";
+      ctx.fillRect(x * CELL, y * CELL, CELL, CELL);
+    } else if (cell.type === EMITTER) {
+      ctx.fillStyle = "#5be4d0";
+      ctx.beginPath(); ctx.arc(cx, cy, 10, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = "#5be4d0"; ctx.lineWidth = 2;
+      const [dx, dy] = DIR[cell.dir];
+      ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + dx * 18, cy + dy * 18); ctx.stroke();
+      ctx.lineWidth = 1;
+    } else if (cell.type === TARGET) {
+      const isLit = litCellsCache.has(key(x, y));
+      ctx.strokeStyle = isLit ? "#5be48a" : "#8892a6";
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(cx, cy, 12, 0, Math.PI * 2); ctx.stroke();
+      ctx.lineWidth = 1;
+    } else if (cell.type === MIRROR_FS || cell.type === MIRROR_BS) {
+      ctx.strokeStyle = "#e6e9ef"; ctx.lineWidth = 3;
+      ctx.beginPath();
+      if (cell.type === MIRROR_FS) { ctx.moveTo(x * CELL + 8, y * CELL + CELL - 8); ctx.lineTo(x * CELL + CELL - 8, y * CELL + 8); }
+      else { ctx.moveTo(x * CELL + 8, y * CELL + 8); ctx.lineTo(x * CELL + CELL - 8, y * CELL + CELL - 8); }
+      ctx.stroke();
+      ctx.lineWidth = 1;
+    } else if (cell.type === SPLITTER) {
+      ctx.strokeStyle = "#c98bf0"; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(x * CELL + 8, cy); ctx.lineTo(x * CELL + CELL - 8, cy); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(cx, y * CELL + 8); ctx.lineTo(cx, y * CELL + CELL - 8); ctx.stroke();
+      ctx.lineWidth = 1;
+    }
+    if (cell.editable && cell.type === EMPTY) {
+      ctx.strokeStyle = "#2a3145";
+      ctx.strokeRect(x * CELL + 3, y * CELL + 3, CELL - 6, CELL - 6);
+    }
+  }
+
+  canvas.addEventListener("click", (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const x = Math.floor((e.clientX - rect.left) / CELL);
+    const y = Math.floor((e.clientY - rect.top) / CELL);
+    if (x >= 0 && x < COLS && y >= 0 && y < ROWS) cycleCell(x, y);
+  });
+
+  document.getElementById("resetBtn").addEventListener("click", () => {
+    grid = cloneGrid(level.grid);
+    solved = false; failed = false;
+    recompute();
+  });
+
+  document.getElementById("newBtn").addEventListener("click", () => {
+    loadLevel(Date.now() & 0xffffffff);
+  });
+
+  // ---------- Test hook ----------
+  window.__photonReflect = {
+    simulate,
+    generateLevel,
+    isSolved,
+    get grid() { return grid; },
+    get level() { return level; },
+    get litCells() { return litCellsCache; },
+    get solved() { return solved; },
+    get failed() { return failed; },
+    get placementsUsed() { return placementsUsed; },
+    cycleCell,
+    loadLevel,
+    reset() {
+      grid = cloneGrid(level.grid);
+      solved = false; failed = false;
+      recompute();
+    },
+  };
+
+  // ---------- Boot ----------
+  loadLevel(12345);
+})();
+</script>
+</body>
+</html>
