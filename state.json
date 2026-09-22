@@ -1,42 +1,22 @@
 {
-  "cycle": 1,
-  "cycleStarted": "2026-08-31T12:55:00Z",
-  "lastUpdated": "2026-08-31T13:40:00Z",
-  "phase": "done",
-  "nextPhase": "research",
-  "selectedConcept": "Orbit Duel",
+  "cycle": 2,
+  "cycleStarted": "2026-09-22T00:00:00Z",
+  "lastUpdated": "2026-09-22T00:15:00Z",
+  "phase": "research",
+  "nextPhase": "design",
+  "selectedConcept": "Photon Reflect",
   "checkpoints": [
     {
       "phase": "research",
-      "completedAt": "2026-08-31T12:58:00Z",
-      "outputs": ["docs/concepts.md"],
-      "notes": "5 concepts brainstormed and scored; Orbit Duel selected, Gravity Flip Runner as fallback."
-    },
-    {
-      "phase": "design",
-      "completedAt": "2026-08-31T13:02:00Z",
-      "outputs": ["docs/design.md"],
-      "notes": "Single-file HTML5 canvas architecture, tunable constants, testing plan defined."
-    },
-    {
-      "phase": "implementation",
-      "completedAt": "2026-08-31T13:25:00Z",
-      "outputs": ["game/index.html"],
-      "notes": "Self-contained playable prototype: 2-player local gravity-duel arcade game, no build step, no external assets/deps."
-    },
-    {
-      "phase": "testing",
-      "completedAt": "2026-08-31T13:40:00Z",
-      "outputs": ["docs/test-results.md"],
-      "notes": "Automated Playwright/headless-Chromium smoke tests: load+interaction test and ~6s extended-session test, both PASS. Found and fixed one test-hook staleness bug (window.__orbitDuel.bullets snapshot vs live getter) during testing. Win-condition end-to-end and fun/balance tuning are NOT covered by automated tests -- flagged as follow-up."
+      "completedAt": "2026-09-22T00:15:00Z",
+      "outputs": ["docs/cycle2/concepts.md"],
+      "notes": "5 concepts brainstormed and scored (added a testability criterion this cycle, motivated by Cycle 1's untested win-condition gap). Photon Reflect (grid laser-reflection puzzle, procedurally generated + solvability-checked) selected; Orbit Duel: AI Rival kept as runner-up/fallback."
     }
   ],
   "blockers": [],
   "followUps": [
-    "Human/manual playtest of Orbit Duel for feel/balance tuning (SHIP_THRUST, SHIP_DRAG, G, BULLET_SPEED).",
-    "Automated end-to-end test of the win condition + restart flow.",
-    "Consider a simple AI opponent or additional modes if this concept is revisited in a future cycle."
+    "Cycle 1 follow-ups still open and deferred to a future cycle: human/manual playtest of Orbit Duel for feel/balance tuning; consider an AI opponent for Orbit Duel (candidate 'Orbit Duel: AI Rival' was scored this cycle and lost narrowly to Photon Reflect -- good pick for Cycle 3 if revisited)."
   ],
-  "budgetNotes": "Single-session run, no subagent fan-out used to conserve budget. Implementation kept to one self-contained HTML file (no build step) to keep scope tight. Cycle 1 completed fully within budget with no usage-limit warning encountered.",
-  "resumeInstructions": "Cycle 1 is complete (phase: done) with valid outputs at every checkpoint -- do not re-execute cycle 1's research/design/implementation/testing phases. On next invocation, start Cycle 2 at 'research': read docs/concepts.md for prior art (avoid re-proposing Orbit Duel/Gravity Flip Runner/Color Bind/Signal Weaver/Chrono Loop verbatim; a genuine evolution of one is fine) and consider addressing the 'followUps' list above (e.g. iterating on Orbit Duel) as one of the new cycle's candidate concepts."
+  "budgetNotes": "Cycle 2 started single-session, no subagent fan-out, consistent with Cycle 1's budget-conservation approach. Research phase completed directly in-session (Sonnet 5, matching guidance to use Sonnet 5 for creative exploration).",
+  "resumeInstructions": "Cycle 2 phase 'research' is complete with a valid output (docs/cycle2/concepts.md) -- do not re-run it. Resume at 'design': produce docs/cycle2/design.md for Photon Reflect (grid size, tile types incl. mirrors/splitters, move-limit rule, level generator + solvability checker, single-file HTML5 canvas architecture matching Cycle 1's no-build-step/no-external-deps pattern), then implement game/cycle2/index.html, then automated tests documented in docs/cycle2/test-results.md. Keep Cycle 1's outputs (docs/concepts.md, docs/design.md, docs/test-results.md, game/index.html) untouched for audit trail; all Cycle 2 outputs live under the cycle2/ subfolders."
 }
