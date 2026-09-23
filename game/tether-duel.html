@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Tether Duel</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #05060a;
+    overflow: hidden;
+    height: 100%;
+  }
+  canvas {
+    display: block;
+    margin: 0 auto;
+    background: #05060a;
+  }
+  #hint {
+    position: fixed;
+    bottom: 8px;
+    left: 0;
+    right: 0;
+    text-align: center;
+    color: #7d8aa3;
+    font: 13px monospace;
+    pointer-events: none;
+  }
+</style>
+</head>
+<body>
+<canvas id="c" width="960" height="600"></canvas>
+<div id="hint">P1: A/D rotate, W thrust &nbsp;|&nbsp; P2: Arrow Left/Right rotate, Arrow Up thrust &nbsp;|&nbsp; R: restart</div>
+<script>
+(function () {
+  "use strict";
+
+  // ---------- Vector helpers ----------
+  const V = {
+    add: (a, b) => ({ x: a.x + b.x, y: a.y + b.y }),
+    sub: (a, b) => ({ x: a.x - b.x, y: a.y - b.y }),
+    scale: (a, s) => ({ x: a.x * s, y: a.y * s }),
+    length: (a) => Math.hypot(a.x, a.y),
+    normalize: (a) => {
+      const len = V.length(a);
+      return len > 1e-6 ? { x: a.x / len, y: a.y / len } : { x: 0, y: 0 };
+    },
+  };
+
+  // ---------- Tunable constants ----------
+  const TETHER_REST_LENGTH = 220;
+  const TETHER_K = 6.5;            // spring constant
+  const TETHER_MAX_STRETCH = 520;  // hard safety valve distance
+  const SHIP_THRUST = 260;
+  const SHIP_ROT_SPEED = 3.4;      // rad/s
+  const SHIP_DRAG = 0.6;           // fraction of velocity retained per second^-1 term
+  const SHIP_RADIUS = 12;
+  const HAZARD_RADIUS = 46;
+  const ROUNDS_TO_WIN = 3;
+
+  const canvas = document.getElementById("c");
+  const ctx = canvas.getContext("2d");
+  const W = canvas.width, H = canvas.height;
+
+  const spawnPoints = [
+    { x: W * 0.3, y: H * 0.5 },
+    { x: W * 0.7, y: H * 0.5 },
+  ];
+
+  const hazards = [
+    { x: 70, y: 70 },
+    { x: W - 70, y: 70 },
+    { x: 70, y: H - 70 },
+    { x: W - 70, y: H - 70 },
+    { x: W / 2, y: 40 },
+    { x: W / 2, y: H - 40 },
+  ];
+
+  function makeShip(spawn, angle, color) {
+    return {
+      pos: { x: spawn.x, y: spawn.y },
+      vel: { x: 0, y: 0 },
+      angle,
+      color,
+      thrusting: false,
+    };
+  }
+
+  let state = null;
+
+  function resetMatch() {
+    state = {
+      ships: [
+        makeShip(spawnPoints[0], 0, "#4fd6ff"),
+        makeShip(spawnPoints[1], Math.PI, "#ff6b6b"),
+      ],
+      scores: [0, 0],
+      phase: "playing", // 'playing' | 'roundEnd' | 'matchEnd'
+      phaseTimer: 0,
+      lastHazardHit: -1, // index of ship that hit a hazard (loses the round)
+      winner: -1,
+    };
+  }
+
+  function resetRound() {
+    state.ships[0].pos = { x: spawnPoints[0].x, y: spawnPoints[0].y };
+    state.ships[0].vel = { x: 0, y: 0 };
+    state.ships[0].angle = 0;
+    state.ships[1].pos = { x: spawnPoints[1].x, y: spawnPoints[1].y };
+    state.ships[1].vel = { x: 0, y: 0 };
+    state.ships[1].angle = Math.PI;
+    state.phase = "playing";
+  }
+
+  resetMatch();
+
+  const keys = new Set();
+  window.addEventListener("keydown", (e) => {
+    keys.add(e.key.toLowerCase());
+    if (e.key.toLowerCase() === "r" && state.phase === "matchEnd") {
+      resetMatch();
+    }
+  });
+  window.addEventListener("keyup", (e) => keys.delete(e.key.toLowerCase()));
+
+  function applyInput(ship, rotKey, negRotKey, thrustKey, dt) {
+    if (keys.has(rotKey)) ship.angle += SHIP_ROT_SPEED * dt;
+    if (keys.has(negRotKey)) ship.angle -= SHIP_ROT_SPEED * dt;
+    ship.thrusting = keys.has(thrustKey);
+    if (ship.thrusting) {
+      ship.vel.x += Math.cos(ship.angle) * SHIP_THRUST * dt;
+      ship.vel.y += Math.sin(ship.angle) * SHIP_THRUST * dt;
+    }
+  }
+
+  function tetherStretch() {
+    const [a, b] = state.ships;
+    return V.length(V.sub(b.pos, a.pos));
+  }
+
+  function physicsStep(dt) {
+    if (state.phase !== "playing") return;
+
+    applyInput(state.ships[0], "d", "a", "w", dt);
+    applyInput(state.ships[1], "arrowright", "arrowleft", "arrowup", dt);
+
+    const [a, b] = state.ships;
+    const delta = V.sub(b.pos, a.pos);
+    const dist = V.length(delta) || 1e-6;
+    const dir = V.scale(delta, 1 / dist);
+    const stretch = dist - TETHER_REST_LENGTH;
+    const springForce = TETHER_K * stretch;
+
+    // Spring pulls ships together when stretched (positive stretch),
+    // gently pushes apart when compressed (negative stretch) so they
+    // don't sit on top of each other indefinitely.
+    a.vel.x += dir.x * springForce * dt;
+    a.vel.y += dir.y * springForce * dt;
+    b.vel.x -= dir.x * springForce * dt;
+    b.vel.y -= dir.y * springForce * dt;
+
+    // Hard safety valve if stretched far beyond expected range.
+    if (dist > TETHER_MAX_STRETCH) {
+      const correction = (dist - TETHER_MAX_STRETCH) * 8;
+      a.vel.x += dir.x * correction * dt;
+      a.vel.y += dir.y * correction * dt;
+      b.vel.x -= dir.x * correction * dt;
+      b.vel.y -= dir.y * correction * dt;
+    }
+
+    for (const ship of state.ships) {
+      // Drag (exponential decay toward zero velocity).
+      const dragFactor = Math.exp(-SHIP_DRAG * dt);
+      ship.vel.x *= dragFactor;
+      ship.vel.y *= dragFactor;
+
+      ship.pos.x += ship.vel.x * dt;
+      ship.pos.y += ship.vel.y * dt;
+
+      // Bounded arena: clamp position and kill outward velocity on contact.
+      if (ship.pos.x < SHIP_RADIUS) { ship.pos.x = SHIP_RADIUS; ship.vel.x = Math.abs(ship.vel.x) * 0.4; }
+      if (ship.pos.x > W - SHIP_RADIUS) { ship.pos.x = W - SHIP_RADIUS; ship.vel.x = -Math.abs(ship.vel.x) * 0.4; }
+      if (ship.pos.y < SHIP_RADIUS) { ship.pos.y = SHIP_RADIUS; ship.vel.y = Math.abs(ship.vel.y) * 0.4; }
+      if (ship.pos.y > H - SHIP_RADIUS) { ship.pos.y = H - SHIP_RADIUS; ship.vel.y = -Math.abs(ship.vel.y) * 0.4; }
+    }
+
+    checkHazardCollisions();
+  }
+
+  function checkHazardCollisions() {
+    for (let i = 0; i < state.ships.length; i++) {
+      const ship = state.ships[i];
+      for (const hz of hazards) {
+        const d = V.length(V.sub(ship.pos, hz));
+        if (d < HAZARD_RADIUS + SHIP_RADIUS * 0.5) {
+          endRound(i);
+          return;
+        }
+      }
+    }
+  }
+
+  function endRound(loserIndex) {
+    const winnerIndex = loserIndex === 0 ? 1 : 0;
+    state.scores[winnerIndex] += 1;
+    state.lastHazardHit = loserIndex;
+    state.phase = "roundEnd";
+    state.phaseTimer = 0;
+    if (state.scores[winnerIndex] >= ROUNDS_TO_WIN) {
+      state.winner = winnerIndex;
+    }
+  }
+
+  function updatePhase(dt) {
+    if (state.phase === "roundEnd") {
+      state.phaseTimer += dt;
+      if (state.phaseTimer > 1.1) {
+        if (state.winner >= 0) {
+          state.phase = "matchEnd";
+        } else {
+          resetRound();
+        }
+      }
+    }
+  }
+
+  // ---------- Render ----------
+  function render() {
+    ctx.clearRect(0, 0, W, H);
+
+    // Arena border
+    ctx.strokeStyle = "#1c2436";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(1, 1, W - 2, H - 2);
+
+    // Hazards
+    const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 220);
+    for (const hz of hazards) {
+      ctx.beginPath();
+      ctx.arc(hz.x, hz.y, HAZARD_RADIUS, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(255, ${60 + pulse * 30}, ${60 + pulse * 30}, 0.25)`;
+      ctx.fill();
+      ctx.strokeStyle = "#ff4d4d";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+
+    // Tether
+    const [a, b] = state.ships;
+    const dist = tetherStretch();
+    const stretchRatio = Math.max(0, (dist - TETHER_REST_LENGTH) / (TETHER_MAX_STRETCH - TETHER_REST_LENGTH));
+    const tetherColor = stretchRatio < 0.4
+      ? "#5fdc7a"
+      : stretchRatio < 0.75
+        ? "#f0d040"
+        : "#ff5050";
+    ctx.beginPath();
+    ctx.moveTo(a.pos.x, a.pos.y);
+    ctx.lineTo(b.pos.x, b.pos.y);
+    ctx.strokeStyle = tetherColor;
+    ctx.lineWidth = 3;
+    ctx.stroke();
+
+    // Ships
+    for (const ship of state.ships) {
+      ctx.save();
+      ctx.translate(ship.pos.x, ship.pos.y);
+      ctx.rotate(ship.angle);
+      ctx.beginPath();
+      ctx.moveTo(SHIP_RADIUS, 0);
+      ctx.lineTo(-SHIP_RADIUS * 0.8, SHIP_RADIUS * 0.7);
+      ctx.lineTo(-SHIP_RADIUS * 0.8, -SHIP_RADIUS * 0.7);
+      ctx.closePath();
+      ctx.fillStyle = ship.color;
+      ctx.fill();
+
+      if (ship.thrusting) {
+        ctx.beginPath();
+        ctx.moveTo(-SHIP_RADIUS * 0.8, SHIP_RADIUS * 0.4);
+        ctx.lineTo(-SHIP_RADIUS * 1.8, 0);
+        ctx.lineTo(-SHIP_RADIUS * 0.8, -SHIP_RADIUS * 0.4);
+        ctx.closePath();
+        ctx.fillStyle = "#ffcf4d";
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+
+    // HUD
+    ctx.font = "24px monospace";
+    ctx.fillStyle = state.ships[0].color;
+    ctx.fillText("P1: " + state.scores[0], 20, 34);
+    ctx.fillStyle = state.ships[1].color;
+    ctx.textAlign = "right";
+    ctx.fillText("P2: " + state.scores[1], W - 20, 34);
+    ctx.textAlign = "left";
+
+    if (state.phase === "roundEnd" && state.winner < 0) {
+      ctx.font = "bold 32px monospace";
+      ctx.fillStyle = "#ffffff";
+      ctx.textAlign = "center";
+      const loser = state.lastHazardHit === 0 ? "P1" : "P2";
+      ctx.fillText(loser + " hit a hazard!", W / 2, H / 2);
+      ctx.textAlign = "left";
+    }
+
+    if (state.phase === "matchEnd") {
+      ctx.fillStyle = "rgba(0,0,0,0.6)";
+      ctx.fillRect(0, 0, W, H);
+      ctx.font = "bold 40px monospace";
+      ctx.fillStyle = state.winner === 0 ? state.ships[0].color : state.ships[1].color;
+      ctx.textAlign = "center";
+      ctx.fillText((state.winner === 0 ? "P1" : "P2") + " WINS THE MATCH", W / 2, H / 2 - 10);
+      ctx.font = "18px monospace";
+      ctx.fillStyle = "#cccccc";
+      ctx.fillText("Press R to restart", W / 2, H / 2 + 30);
+      ctx.textAlign = "left";
+    }
+  }
+
+  // ---------- Game loop ----------
+  let lastTime = performance.now();
+  function loop(now) {
+    let dt = (now - lastTime) / 1000;
+    lastTime = now;
+    dt = Math.min(dt, 1 / 20); // clamp to avoid spiral-of-death on lag/tab-switch
+
+    physicsStep(dt);
+    updatePhase(dt);
+    render();
+
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+
+  // ---------- Test hook ----------
+  // Exposes live state for automated smoke tests (see docs/cycle2-test-results.md).
+  // Getters are used (rather than plain properties) because `state` is reassigned
+  // wholesale on resetMatch(), so a snapshotted reference would go stale --
+  // the same pitfall documented as a bug fix in Cycle 001.
+  window.__tetherDuel = {
+    get ships() { return state.ships; },
+    get scores() { return state.scores; },
+    get phase() { return state.phase; },
+    get winner() { return state.winner; },
+    get tetherStretch() { return tetherStretch(); },
+    hazards,
+    // Test-only helper: teleport a ship onto a hazard to exercise the
+    // round-end state machine without needing precision physics timing.
+    forceShipOntoHazard(shipIndex, hazardIndex) {
+      const hz = hazards[hazardIndex];
+      state.ships[shipIndex].pos = { x: hz.x, y: hz.y };
+    },
+  };
+})();
+</script>
+</body>
+</html>

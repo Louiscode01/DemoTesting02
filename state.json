@@ -1,42 +1,80 @@
 {
-  "cycle": 1,
-  "cycleStarted": "2026-08-31T12:55:00Z",
-  "lastUpdated": "2026-08-31T13:40:00Z",
+  "cycle": 2,
+  "cycleStarted": "2026-09-23T00:00:00Z",
+  "lastUpdated": "2026-09-23T00:45:00Z",
   "phase": "done",
   "nextPhase": "research",
-  "selectedConcept": "Orbit Duel",
+  "selectedConcept": "Tether Duel",
   "checkpoints": [
     {
       "phase": "research",
-      "completedAt": "2026-08-31T12:58:00Z",
-      "outputs": ["docs/concepts.md"],
-      "notes": "5 concepts brainstormed and scored; Orbit Duel selected, Gravity Flip Runner as fallback."
+      "completedAt": "2026-09-23T00:10:00Z",
+      "outputs": ["docs/cycle2-concepts.md"],
+      "notes": "5 concepts brainstormed and scored (checked against Cycle 001's concepts to avoid duplicates); Tether Duel selected, Pulse Runner as fallback."
     },
     {
       "phase": "design",
-      "completedAt": "2026-08-31T13:02:00Z",
-      "outputs": ["docs/design.md"],
-      "notes": "Single-file HTML5 canvas architecture, tunable constants, testing plan defined."
+      "completedAt": "2026-09-23T00:20:00Z",
+      "outputs": ["docs/cycle2-design.md"],
+      "notes": "Single-file HTML5 canvas architecture (game/tether-duel.html), tunable constants, testing plan defined -- including a scripted hazard-collision/round-end test to close Cycle 001's win-condition-testing gap."
     },
     {
       "phase": "implementation",
-      "completedAt": "2026-08-31T13:25:00Z",
-      "outputs": ["game/index.html"],
-      "notes": "Self-contained playable prototype: 2-player local gravity-duel arcade game, no build step, no external assets/deps."
+      "completedAt": "2026-09-23T00:32:00Z",
+      "outputs": ["game/tether-duel.html"],
+      "notes": "Self-contained playable prototype: 2-player local elastic-tether arena duel, no build step, no external assets/deps. Reused Cycle 001's lesson on exposing live-reassigned state via getters in the debug hook."
     },
     {
       "phase": "testing",
-      "completedAt": "2026-08-31T13:40:00Z",
-      "outputs": ["docs/test-results.md"],
-      "notes": "Automated Playwright/headless-Chromium smoke tests: load+interaction test and ~6s extended-session test, both PASS. Found and fixed one test-hook staleness bug (window.__orbitDuel.bullets snapshot vs live getter) during testing. Win-condition end-to-end and fun/balance tuning are NOT covered by automated tests -- flagged as follow-up."
+      "completedAt": "2026-09-23T00:45:00Z",
+      "outputs": ["docs/cycle2-test-results.md"],
+      "notes": "Automated Playwright/headless-Chromium tests: load+interaction smoke test, scripted hazard-collision/round-end test, match-end win-condition test, and restart-via-R test -- all 4 PASS, zero console/page errors. Closes Cycle 001's flagged gap (win-condition logic now has an automated test, not just code review)."
     }
   ],
   "blockers": [],
   "followUps": [
-    "Human/manual playtest of Orbit Duel for feel/balance tuning (SHIP_THRUST, SHIP_DRAG, G, BULLET_SPEED).",
-    "Automated end-to-end test of the win condition + restart flow.",
-    "Consider a simple AI opponent or additional modes if this concept is revisited in a future cycle."
+    "Human/manual playtest of Tether Duel for feel/balance tuning (TETHER_K, TETHER_REST_LENGTH, SHIP_THRUST, SHIP_DRAG).",
+    "Human/manual playtest of Orbit Duel (Cycle 001) for feel/balance tuning -- still outstanding.",
+    "End-to-end test of Tether Duel driving a hazard hit through simulated thrust/rotation input (not just the debug teleport hook), to verify the tether-tension gameplay loop itself, not just the state machine.",
+    "Consider a simple AI opponent for either Orbit Duel or Tether Duel if revisited in a future cycle."
   ],
-  "budgetNotes": "Single-session run, no subagent fan-out used to conserve budget. Implementation kept to one self-contained HTML file (no build step) to keep scope tight. Cycle 1 completed fully within budget with no usage-limit warning encountered.",
-  "resumeInstructions": "Cycle 1 is complete (phase: done) with valid outputs at every checkpoint -- do not re-execute cycle 1's research/design/implementation/testing phases. On next invocation, start Cycle 2 at 'research': read docs/concepts.md for prior art (avoid re-proposing Orbit Duel/Gravity Flip Runner/Color Bind/Signal Weaver/Chrono Loop verbatim; a genuine evolution of one is fine) and consider addressing the 'followUps' list above (e.g. iterating on Orbit Duel) as one of the new cycle's candidate concepts."
+  "budgetNotes": "Single-session run, no subagent fan-out used to conserve budget (same approach as Cycle 001). Implementation kept to one self-contained HTML file (no build step) to keep scope tight. Cycle 2 completed fully within budget with no usage-limit warning encountered.",
+  "resumeInstructions": "Cycle 2 is complete (phase: done) with valid outputs at every checkpoint -- do not re-execute cycle 2's research/design/implementation/testing phases. On next invocation, start Cycle 3 at 'research': read docs/cycle2-concepts.md and docs/concepts.md for prior art (avoid re-proposing Orbit Duel/Gravity Flip Runner/Color Bind/Signal Weaver/Chrono Loop/Tether Duel/Pulse Runner/Bomb Pit Arena/Drift King/Echo Chamber verbatim; a genuine evolution of one is fine) and consider addressing the 'followUps' list above as one of the new cycle's candidate concepts.",
+  "history": [
+    {
+      "cycle": 1,
+      "cycleStarted": "2026-08-31T12:55:00Z",
+      "lastUpdated": "2026-08-31T13:40:00Z",
+      "phase": "done",
+      "selectedConcept": "Orbit Duel",
+      "checkpoints": [
+        {
+          "phase": "research",
+          "completedAt": "2026-08-31T12:58:00Z",
+          "outputs": ["docs/concepts.md"],
+          "notes": "5 concepts brainstormed and scored; Orbit Duel selected, Gravity Flip Runner as fallback."
+        },
+        {
+          "phase": "design",
+          "completedAt": "2026-08-31T13:02:00Z",
+          "outputs": ["docs/design.md"],
+          "notes": "Single-file HTML5 canvas architecture, tunable constants, testing plan defined."
+        },
+        {
+          "phase": "implementation",
+          "completedAt": "2026-08-31T13:25:00Z",
+          "outputs": ["game/index.html"],
+          "notes": "Self-contained playable prototype: 2-player local gravity-duel arcade game, no build step, no external assets/deps."
+        },
+        {
+          "phase": "testing",
+          "completedAt": "2026-08-31T13:40:00Z",
+          "outputs": ["docs/test-results.md"],
+          "notes": "Automated Playwright/headless-Chromium smoke tests: load+interaction test and ~6s extended-session test, both PASS. Found and fixed one test-hook staleness bug during testing. Win-condition end-to-end and fun/balance tuning flagged as follow-up."
+        }
+      ],
+      "blockers": [],
+      "budgetNotes": "Single-session run, no subagent fan-out used to conserve budget. Cycle 1 completed fully within budget with no usage-limit warning encountered."
+    }
+  ]
 }
