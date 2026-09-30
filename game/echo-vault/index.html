@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>Echo Vault</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+body{margin:0;background:#0d1117;color:#e6edf3;font:16px system-ui,sans-serif;display:flex;flex-direction:column;align-items:center}
+canvas{margin-top:16px;background:#161b22;border:1px solid #30363d;max-width:96vw}
+#hud{margin:10px;text-align:center;line-height:1.5}
+kbd{background:#30363d;border-radius:4px;padding:1px 6px}
+</style></head><body>
+<canvas id="c" width="720" height="360"></canvas>
+<div id="hud"></div>
+<script>
+// Echo Vault: turn-based ghost-cooperation puzzle. Pure logic in EV, rendering below.
+const LEVELS = [
+  { name: "First Echo", maxGhosts: 1, map: ["#############", "#S.a.A.....E#", "#############"] },
+  { name: "Two Keys", maxGhosts: 2, map: [
+    "#########", "#a#####a#", "#.#####.#", "#...S...#", "####A####", "####E####"] },
+  { name: "Relay", maxGhosts: 2, map: ["#############", "#S.a.A.b.B.E#", "#############"] },
+];
+const DIRS = { l:[-1,0], r:[1,0], u:[0,-1], d:[0,1], w:[0,0] };
+const EV = {
+  load(i) {
+    const L = LEVELS[i], grid = L.map.map(r => r.split(""));
+    const plates = [], doors = []; let start, exit;
+    grid.forEach((row, y) => row.forEach((ch, x) => {
+      if (ch === "S") start = [x, y]; else if (ch === "E") exit = [x, y];
+      else if (ch >= "a" && ch <= "z") plates.push({ x, y, ch });
+      else if (ch >= "A" && ch <= "Z") doors.push({ x, y, ch: ch.toLowerCase() });
+    }));
+    return { level: i, grid, plates, doors, start, exit, maxGhosts: L.maxGhosts,
+      ghosts: [], cur: [], pos: start.slice(), gpos: [], step: 0, won: false };
+  },
+  wall(s, x, y) { const r = s.grid[y]; return !r || r[x] === undefined || r[x] === "#"; },
+  doorOpen(s, ch) { // all plates of channel occupied by someone
+    const occ = [s.pos, ...s.gpos], ps = s.plates.filter(p => p.ch === ch);
+    return ps.length > 0 && ps.every(p => occ.some(o => o[0] === p.x && o[1] === p.y));
+  },
+  blocked(s, x, y, open) {
+    if (EV.wall(s, x, y)) return true;
+    return s.doors.some(d => d.x === x && d.y === y && !open[d.ch]);
+  },
+  // advance one step; key in l/r/u/d/w
+  move(s, key) {
+    if (s.won) return;
+    const open = {}; [...new Set(s.plates.map(p => p.ch))].forEach(c => open[c] = EV.doorOpen(s, c));
+    const step = (p, k) => { const d = DIRS[k] || DIRS.w, nx = p[0] + d[0], ny = p[1] + d[1];
+      return EV.blocked(s, nx, ny, open) ? p : [nx, ny]; };
+    s.gpos = s.gpos.map((p, i) => step(p, s.ghosts[i][s.step] || "w"));
+    s.pos = step(s.pos, key); s.cur.push(key); s.step++;
+    if (s.pos[0] === s.exit[0] && s.pos[1] === s.exit[1]) s.won = true;
+  },
+  // end the loop: current run becomes a ghost, world rewinds
+  endLoop(s) {
+    if (s.won || !s.cur.length || s.ghosts.length >= s.maxGhosts) return false;
+    s.ghosts.push(s.cur); s.cur = []; s.step = 0; s.pos = s.start.slice();
+    s.gpos = s.ghosts.map(() => s.start.slice()); return true;
+  },
+  reset(s) { return EV.load(s.level); },
+};
+if (typeof module !== "undefined") module.exports = { EV, LEVELS };
+
+// ---- UI ----
+if (typeof document !== "undefined") {
+  const cv = document.getElementById("c"), ctx = cv.getContext("2d"), hud = document.getElementById("hud");
+  let s = EV.load(0);
+  const KEYS = { ArrowLeft:"l", a:"l", ArrowRight:"r", d:"r", ArrowUp:"u", w:"u", ArrowDown:"d", s:"d", " ":"w" };
+  addEventListener("keydown", e => {
+    const k = KEYS[e.key];
+    if (k) { EV.move(s, k); e.preventDefault(); }
+    else if (e.key === "r" || e.key === "Enter") EV.endLoop(s);
+    else if (e.key === "z") s = EV.reset(s);
+    else if (e.key === "n" && s.won) s = EV.load((s.level + 1) % LEVELS.length);
+    draw();
+  });
+  function draw() {
+    const rows = s.grid.length, cols = s.grid[0].length, T = Math.min(60, 700 / cols, 340 / rows);
+    const ox = (cv.width - cols * T) / 2, oy = (cv.height - rows * T) / 2;
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    const cell = (x, y, c, pad = 0) => { ctx.fillStyle = c; ctx.fillRect(ox + x*T + pad, oy + y*T + pad, T - 2*pad, T - 2*pad); };
+    s.grid.forEach((row, y) => row.forEach((ch, x) => { if (ch !== "#") cell(x, y, "#21262d", 1); else cell(x, y, "#484f58", 1); }));
+    cell(s.exit[0], s.exit[1], "#238636", 4);
+    s.plates.forEach(p => cell(p.x, p.y, EV.doorOpen(s, p.ch) ? "#d29922" : "#6e5a1a", 12));
+    s.doors.forEach(d => { if (!EV.doorOpen(s, d.ch)) cell(d.x, d.y, "#da3633", 3); });
+    s.gpos.forEach(p => { ctx.globalAlpha = .55; cell(p[0], p[1], "#58a6ff", 10); ctx.globalAlpha = 1; });
+    cell(s.pos[0], s.pos[1], "#f0f6fc", 8);
+    hud.innerHTML = `<b>Level ${s.level+1}: ${LEVELS[s.level].name}</b> — step ${s.step}, echoes ${s.ghosts.length}/${s.maxGhosts}` +
+      (s.won ? `<br><b style="color:#3fb950">Vault cracked!</b> Press <kbd>N</kbd> for next level` : "") +
+      `<br><kbd>WASD</kbd>/arrows move, <kbd>Space</kbd> wait, <kbd>R</kbd> end loop (your run becomes an echo), <kbd>Z</kbd> restart`;
+  }
+  draw();
+  window.__echoVault = { get s() { return s; }, EV };
+}
+</script></body></html>
