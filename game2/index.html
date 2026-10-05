@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Tether Swing</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>html,body{margin:0;background:#0b1020;color:#cde;font:14px monospace;height:100%;overflow:hidden}
+canvas{display:block;margin:0 auto;background:#10172e}#h{text-align:center;padding:4px}</style></head>
+<body><div id="h">Hold SPACE / mouse to grapple the nearest anchor, release to fling. R = restart. Outrun the tide.</div>
+<canvas id="c" width="960" height="540"></canvas>
+<script>
+(()=>{
+const W=960,H=540,DT=1/120;
+const G=1400,DRAG=0.1,HOOK_RANGE=330,TIDE_SPEED=40,TIDE_ACCEL=1.5;
+const cv=document.getElementById('c'),ctx=cv.getContext('2d');
+let seed=12345;
+function rng(s){return function(){s|=0;s=s+0x6D2B79F5|0;let t=Math.imul(s^s>>>15,1|s);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+let rand,p,anchors,genX,rope,tide,over,best=0,held=false,t0;
+function reset(){
+  rand=rng(seed);p={x:100,y:200,vx:160,vy:0};anchors=[];genX=200;rope=null;tide=H+20;over=false;t0=0;
+  gen(W*2);
+}
+function gen(upTo){while(genX<upTo){anchors.push({x:genX,y:80+rand()*180});genX+=140+rand()*120;}}
+function attach(){
+  let b=null,bd=1e9;
+  for(const a of anchors){const dx=a.x-p.x,dy=a.y-p.y,d=Math.hypot(dx,dy);
+    if(dy<-20&&dx>-60&&d<HOOK_RANGE&&d<bd){b=a;bd=d;}}
+  if(b)rope={a:b,L:bd};
+}
+function step(){
+  if(over)return;
+  t0+=DT;
+  if(held&&!rope)attach();
+  if(!held)rope=null;
+  p.vy+=G*DT;
+  const k=Math.max(0,1-DRAG*DT);p.vx*=k;p.vy*=k;
+  p.x+=p.vx*DT;p.y+=p.vy*DT;
+  if(rope){
+    const dx=p.x-rope.a.x,dy=p.y-rope.a.y,d=Math.hypot(dx,dy);
+    if(d>rope.L){const nx=dx/d,ny=dy/d;
+      p.x=rope.a.x+nx*rope.L;p.y=rope.a.y+ny*rope.L;
+      const vn=p.vx*nx+p.vy*ny;if(vn>0){p.vx-=vn*nx;p.vy-=vn*ny;}}
+  }
+  if(p.y<0){p.y=0;if(p.vy<0)p.vy=0;}
+  if(p.vx<60)p.vx+=(60-p.vx)*DT*2; // gentle nudge so you can't stall forever
+  tide-=(TIDE_SPEED+TIDE_ACCEL*t0)*DT;
+  gen(p.x+W*2);
+  best=Math.max(best,p.x/10);
+  if(p.y>=tide||p.y>H){over=true;rope=null;}
+}
+function draw(){
+  const cx=p.x-W*0.3;
+  ctx.fillStyle='#10172e';ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='#8fd';
+  for(const a of anchors){const x=a.x-cx;if(x<-10||x>W+10)continue;ctx.beginPath();ctx.arc(x,a.y,6,0,7);ctx.fill();}
+  if(rope){ctx.strokeStyle='#fff';ctx.beginPath();ctx.moveTo(rope.a.x-cx,rope.a.y);ctx.lineTo(p.x-cx,p.y);ctx.stroke();}
+  ctx.fillStyle=over?'#f55':'#fc4';ctx.beginPath();ctx.arc(p.x-cx,p.y,8,0,7);ctx.fill();
+  ctx.fillStyle='rgba(40,120,255,.55)';ctx.fillRect(0,tide,W,H-tide+2);
+  ctx.fillStyle='#cde';ctx.fillText('Score '+(p.x/10|0)+'  Best '+(best|0),10,20);
+  if(over){ctx.font='28px monospace';ctx.fillText('Swept away! Press R',W/2-150,H/2);ctx.font='14px monospace';}
+}
+let last=performance.now(),acc=0;
+function frame(n){acc+=Math.min(0.1,(n-last)/1000);last=n;while(acc>=DT){step();acc-=DT;}draw();requestAnimationFrame(frame);}
+addEventListener('keydown',e=>{if(e.code==='Space'){held=true;e.preventDefault();}if(e.code==='KeyR')reset();});
+addEventListener('keyup',e=>{if(e.code==='Space')held=false;});
+cv.addEventListener('mousedown',()=>held=true);addEventListener('mouseup',()=>held=false);
+reset();requestAnimationFrame(frame);
+window.__tether={
+  get p(){return p},get over(){return over},get rope(){return rope},get anchors(){return anchors},get tide(){return tide},get best(){return best},
+  setHeld(v){held=v},step(n=1){for(let i=0;i<n;i++)step()},reset,draw
+};
+})();
+</script></body></html>
