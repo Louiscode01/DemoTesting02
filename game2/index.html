@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Echo Vault</title>
+<style>
+html,body{margin:0;background:#0b0f1a;color:#cfe;font-family:monospace;text-align:center}
+canvas{background:#0e1424;margin-top:12px;border:1px solid #234}
+#hud{margin:8px;font-size:14px;min-height:20px}
+</style></head><body>
+<div id="hud"></div><canvas id="c" width="720" height="480"></canvas>
+<div style="font-size:12px;opacity:.7;margin:8px">Arrows/WASD move &middot; Space wait &middot; Enter = send echo (ends loop, ghost replays it) &middot; R restart level &middot; N next level</div>
+<script>
+// ---- Levels: # wall, P start, E exit, a/b plates, A/B doors (open while matching plate is occupied)
+const MAX_GHOSTS = 3, CELL = 56;
+const LEVELS = [
+  { name: "First Echo", map: [
+    "#######",
+    "#P.a#E#",
+    "#...A.#",
+    "#######"] },
+  { name: "Two Keys", map: [
+    "#########",
+    "#P.a#.b.#",
+    "#...A...#",
+    "#######B#",
+    "#######E#",
+    "#########"] },
+];
+// ---- Logic (pure, DOM-free)
+function loadLevel(i) {
+  const g = LEVELS[i].map.map(r => r.split(""));
+  let start = null;
+  g.forEach((row, y) => row.forEach((c, x) => { if (c === "P") { start = { x, y }; row[x] = "."; } }));
+  return { index: i, grid: g, w: g[0].length, h: g.length, start, ghosts: [], path: [{ ...start }], tick: 0, won: false };
+}
+const ghostPos = (gh, t) => gh[Math.min(t, gh.length - 1)];
+function pressed(s, t) { // set of plate letters occupied at tick t (ghosts at t, player at its current position)
+  const set = new Set(), occ = [...s.ghosts.map(g => ghostPos(g, t)), s.path[s.path.length - 1]];
+  for (const p of occ) { const c = s.grid[p.y][p.x]; if (c >= "a" && c <= "z") set.add(c); }
+  return set;
+}
+function step(s, dx, dy) {
+  if (s.won) return false;
+  const cur = s.path[s.path.length - 1], nx = cur.x + dx, ny = cur.y + dy;
+  const t = s.tick + 1;
+  let ok = ny >= 0 && ny < s.h && nx >= 0 && nx < s.w && s.grid[ny][nx] !== "#";
+  if (ok) { const c = s.grid[ny][nx]; if (c >= "A" && c <= "Z" && c !== "E" && !pressed(s, t).has(c.toLowerCase())) ok = false; }
+  const np = ok ? { x: nx, y: ny } : { ...cur };
+  s.path.push(np); s.tick = t;
+  if (s.grid[np.y][np.x] === "E") s.won = true;
+  return ok;
+}
+function sendEcho(s) {
+  if (s.won || s.ghosts.length >= MAX_GHOSTS || s.tick === 0) return false;
+  s.ghosts.push(s.path); s.path = [{ ...s.start }]; s.tick = 0; return true;
+}
+// ---- UI
+let S = loadLevel(0);
+const cv = document.getElementById("c"), ctx = cv.getContext("2d"), hud = document.getElementById("hud");
+const KEYS = { ArrowUp:[0,-1], w:[0,-1], ArrowDown:[0,1], s:[0,1], ArrowLeft:[-1,0], a:[-1,0], ArrowRight:[1,0], d:[1,0], " ":[0,0] };
+addEventListener("keydown", e => {
+  if (KEYS[e.key]) { step(S, ...KEYS[e.key]); e.preventDefault(); }
+  else if (e.key === "Enter") sendEcho(S);
+  else if (e.key === "r" || e.key === "R") S = loadLevel(S.index);
+  else if ((e.key === "n" || e.key === "N") && S.won && S.index + 1 < LEVELS.length) S = loadLevel(S.index + 1);
+});
+function draw() {
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  const ox = (cv.width - S.w * CELL) / 2, oy = (cv.height - S.h * CELL) / 2, pr = pressed(S, S.tick);
+  const cell = (x, y, col, inset = 0) => { ctx.fillStyle = col; ctx.fillRect(ox + x * CELL + inset, oy + y * CELL + inset, CELL - 2 * inset, CELL - 2 * inset); };
+  S.grid.forEach((row, y) => row.forEach((c, x) => {
+    if (c === "#") cell(x, y, "#2a3558");
+    else {
+      cell(x, y, "#141c33", 1);
+      if (c === "E") cell(x, y, "#3c6", 10);
+      else if (c >= "a" && c <= "z") cell(x, y, pr.has(c) ? "#fd4" : "#764", 14);
+      else if (c >= "A" && c <= "Z" && !pr.has(c.toLowerCase())) cell(x, y, "#c44", 4);
+    }
+  }));
+  ctx.globalAlpha = .5;
+  S.ghosts.forEach(g => { const p = ghostPos(g, S.tick); ctx.fillStyle = "#6cf"; ctx.beginPath(); ctx.arc(ox + (p.x + .5) * CELL, oy + (p.y + .5) * CELL, CELL * .3, 0, 7); ctx.fill(); });
+  ctx.globalAlpha = 1;
+  const p = S.path[S.path.length - 1]; ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(ox + (p.x + .5) * CELL, oy + (p.y + .5) * CELL, CELL * .3, 0, 7); ctx.fill();
+  hud.textContent = `Level ${S.index + 1}: ${LEVELS[S.index].name} | tick ${S.tick} | echoes ${S.ghosts.length}/${MAX_GHOSTS}` +
+    (S.won ? (S.index + 1 < LEVELS.length ? " | SOLVED! press N" : " | ALL VAULTS SOLVED!") : "");
+  requestAnimationFrame(draw);
+}
+window.__echo = { get state() { return S; }, step: (dx, dy) => step(S, dx, dy), sendEcho: () => sendEcho(S), load: i => { S = loadLevel(i); } };
+draw();
+</script></body></html>
