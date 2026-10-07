@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Echo Vault</title>
+<style>
+  html,body{margin:0;background:#05070a;color:#9fe;font-family:monospace;height:100%;overflow:hidden}
+  #wrap{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%}
+  canvas{background:#000;border:1px solid #134}
+  #hud{margin-top:6px;font-size:14px}
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="c" width="816" height="816"></canvas><div id="hud"></div></div>
+<script>
+'use strict';
+// ---- Tunables ----
+const CELL = 48, WALL_T = 4;
+const PLAYER_R = 7, PLAYER_SPEED = 130;
+const PING_RADIUS = 170, PING_SPEED = 220, REVEAL_FADE = 2.5;
+const HEAR_RADIUS = 340, GUARD_SPEED = 80, GUARD_CHASE_SPEED = 105, CATCH_RADIUS = 13;
+const GUARD_SEE_RADIUS = 60;
+
+const params = new URLSearchParams(location.search);
+let seedBase = params.has('seed') ? +params.get('seed') : (Math.random() * 1e9) | 0;
+const guardsOverride = params.has('guards') ? +params.get('guards') : null;
+const startLevel = params.has('level') ? +params.get('level') : 1;
+
+const canvas = document.getElementById('c'), ctx = canvas.getContext('2d');
+const hud = document.getElementById('hud');
+
+function rng(seed) { // mulberry32
+  let a = seed >>> 0;
+  return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+}
+
+// ---- Maze (bit flags: 1=N 2=E 4=S 8=W means passage OPEN) ----
+const DIRS = [[0,-1,1,4],[1,0,2,8],[0,1,4,1],[-1,0,8,2]];
+let level, W, H, open, segs, exitCell, player, guards, pings, rings, pingsLeft, state, rand, noise, attempts, msg, msgT;
+
+function genMaze(w, h, r) {
+  const o = new Array(w * h).fill(0), seen = new Array(w * h).fill(false), stack = [0];
+  seen[0] = true;
+  while (stack.length) {
+    const c = stack[stack.length - 1], cx = c % w, cy = (c / w) | 0;
+    const nb = DIRS.filter(([dx, dy]) => { const x = cx + dx, y = cy + dy; return x >= 0 && y >= 0 && x < w && y < h && !seen[y * w + x]; });
+    if (!nb.length) { stack.pop(); continue; }
+    const [dx, dy, f, b] = nb[(r() * nb.length) | 0], n = (cy + dy) * w + cx + dx;
+    o[c] |= f; o[n] |= b; seen[n] = true; stack.push(n);
+  }
+  // braid: knock out some extra walls so guards/player have loops
+  for (let i = 0; i < (w * h) / 6; i++) {
+    const cx = (r() * w) | 0, cy = (r() * h) | 0, [dx, dy, f, b] = DIRS[(r() * 4) | 0], x = cx + dx, y = cy + dy;
+    if (x >= 0 && y >= 0 && x < w && y < h) { o[cy * w + cx] |= f; o[y * w + x] |= b; }
+  }
+  return o;
+}
+
+function buildSegs() {
+  segs = [];
+  const add = (x1, y1, x2, y2) => segs.push({ x1, y1, x2, y2, seenAt: -1e9,
+    rx: Math.min(x1, x2) - WALL_T / 2, ry: Math.min(y1, y2) - WALL_T / 2,
+    rw: Math.abs(x2 - x1) + WALL_T, rh: Math.abs(y2 - y1) + WALL_T });
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const f = open[y * W + x], px = x * CELL, py = y * CELL;
+    if (!(f & 1)) add(px, py, px + CELL, py);
+    if (!(f & 8)) add(px, py, px, py + CELL);
+    if (x === W - 1) add(px + CELL, py, px + CELL, py + CELL);
+    if (y === H - 1) add(px, py + CELL, px + CELL, py + CELL);
+  }
+}
+
+const cc = (cx, cy) => ({ x: cx * CELL + CELL / 2, y: cy * CELL + CELL / 2 });
+const cellOf = p => ({ cx: Math.max(0, Math.min(W - 1, (p.x / CELL) | 0)), cy: Math.max(0, Math.min(H - 1, (p.y / CELL) | 0)) });
+
+function bfs(from, to) { // returns list of cell indices from..to
+  const prev = new Map([[from, -1]]), q = [from];
+  while (q.length) {
+    const c = q.shift(); if (c === to) break;
+    const cx = c % W, cy = (c / W) | 0;
+    for (const [dx, dy, f] of DIRS) if (open[c] & f) {
+      const n = (cy + dy) * W + cx + dx;
+      if (!prev.has(n)) { prev.set(n, c); q.push(n); }
+    }
+  }
+  if (!prev.has(to)) return [];
+  const path = []; for (let c = to; c !== -1; c = prev.get(c)) path.push(c);
+  return path.reverse();
+}
+
+function newLevel(lv, keepSeed) {
+  level = lv; attempts = keepSeed ? attempts : 0;
+  W = H = Math.min(17, 7 + 2 * (lv - 1));
+  rand = rng(seedBase + lv * 7919);
+  open = genMaze(W, H, rand); buildSegs();
+  exitCell = W * H - 1;
+  resetAttempt();
+}
+
+function resetAttempt() {
+  player = { x: CELL / 2, y: CELL / 2 };
+  pingsLeft = Math.max(4, 11 - level); rings = []; noise = null; state = 'playing';
+  const gr = rng(seedBase + level * 104729 + attempts);
+  const n = guardsOverride !== null ? guardsOverride : Math.min(level, 6);
+  guards = [];
+  for (let i = 0; i < n; i++) {
+    let c; do { c = (gr() * W * H) | 0; } while ((c % W) + ((c / W) | 0) < 5 || c === exitCell);
+    const p = cc(c % W, (c / W) | 0);
+    guards.push({ x: p.x, y: p.y, mode: 'patrol', path: [], target: null, blip: -1e9 });
+  }
+}
+
+// ---- Input ----
+const keys = new Set();
+addEventListener('keydown', e => {
+  keys.add(e.code);
+  if (e.code === 'Space') { e.preventDefault(); if (state === 'playing') doPing(); }
+  if (e.code === 'KeyR') { attempts++; if (state === 'won-all') newLevel(1); else resetAttempt(); }
+  if (e.code === 'Enter' && state === 'levelDone') newLevel(level + 1);
+  if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code)) e.preventDefault();
+});
+addEventListener('keyup', e => keys.delete(e.code));
+
+let now = 0;
+function doPing() {
+  if (pingsLeft <= 0) return;
+  pingsLeft--;
+  rings.push({ x: player.x, y: player.y, r: 0 });
+  noise = { x: player.x, y: player.y };
+  for (const g of guards) if (Math.hypot(g.x - player.x, g.y - player.y) < HEAR_RADIUS) {
+    const a = cellOf(g), b = cellOf(player);
+    g.mode = 'investigate'; g.path = bfs(a.cy * W + a.cx, b.cy * W + b.cx);
+  }
+}
+
+// ---- Physics ----
+function collides(x, y) {
+  for (const s of segs) {
+    const nx = Math.max(s.rx, Math.min(x, s.rx + s.rw)), ny = Math.max(s.ry, Math.min(y, s.ry + s.rh));
+    if ((x - nx) ** 2 + (y - ny) ** 2 < PLAYER_R * PLAYER_R) return true;
+  }
+  return false;
+}
+
+function moveGuard(g, dt) {
+  const speed = g.mode === 'investigate' ? GUARD_CHASE_SPEED : GUARD_SPEED;
+  if (!g.path.length) {
+    if (g.mode === 'investigate') g.mode = 'patrol';
+    const a = cellOf(g), t = (rand() * W * H) | 0;
+    g.path = bfs(a.cy * W + a.cx, t); return;
+  }
+  const c = g.path[0], tp = cc(c % W, (c / W) | 0), dx = tp.x - g.x, dy = tp.y - g.y, d = Math.hypot(dx, dy);
+  const step = speed * dt;
+  if (d <= step) { g.x = tp.x; g.y = tp.y; g.path.shift(); } else { g.x += dx / d * step; g.y += dy / d * step; }
+}
+
+function update(dt) {
+  now += dt;
+  if (msgT > 0) msgT -= dt;
+  if (state !== 'playing') return;
+  let ax = 0, ay = 0;
+  if (keys.has('KeyA') || keys.has('ArrowLeft')) ax -= 1;
+  if (keys.has('KeyD') || keys.has('ArrowRight')) ax += 1;
+  if (keys.has('KeyW') || keys.has('ArrowUp')) ay -= 1;
+  if (keys.has('KeyS') || keys.has('ArrowDown')) ay += 1;
+  const m = Math.hypot(ax, ay) || 1, vx = ax / m * PLAYER_SPEED * dt, vy = ay / m * PLAYER_SPEED * dt;
+  if (!collides(player.x + vx, player.y)) player.x += vx;
+  if (!collides(player.x, player.y + vy)) player.y += vy;
+
+  for (const r of rings) {
+    r.r += PING_SPEED * dt;
+    const lim = Math.min(r.r, PING_RADIUS);
+    for (const s of segs) {
+      const nx = Math.max(s.rx, Math.min(r.x, s.rx + s.rw)), ny = Math.max(s.ry, Math.min(r.y, s.ry + s.rh));
+      if (Math.hypot(r.x - nx, r.y - ny) <= lim) s.seenAt = now;
+    }
+    for (const g of guards) if (Math.hypot(g.x - r.x, g.y - r.y) <= lim) g.blip = now;
+  }
+  rings = rings.filter(r => r.r < PING_RADIUS + 20);
+
+  for (const g of guards) {
+    moveGuard(g, dt);
+    const d = Math.hypot(g.x - player.x, g.y - player.y);
+    if (d < GUARD_SEE_RADIUS) g.blip = now;
+    if (d < CATCH_RADIUS) { state = 'caught'; msg = 'Caught! Press R to retry'; }
+  }
+  const e = cc(exitCell % W, (exitCell / W) | 0);
+  if (Math.hypot(e.x - player.x, e.y - player.y) < 16) {
+    state = level >= 5 ? 'won-all' : 'levelDone';
+    msg = state === 'won-all' ? 'Vault cleared! R to play again' : 'Level clear! Enter for next';
+  }
+}
+
+// ---- Render ----
+function draw() {
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+  const ox = (canvas.width - W * CELL) / 2, oy = (canvas.height - H * CELL) / 2;
+  ctx.save(); ctx.translate(ox, oy);
+  ctx.lineWidth = WALL_T; ctx.lineCap = 'square';
+  for (const s of segs) {
+    const a = 1 - (now - s.seenAt) / REVEAL_FADE; if (a <= 0) continue;
+    ctx.strokeStyle = `rgba(80,255,220,${a})`;
+    ctx.beginPath(); ctx.moveTo(s.x1, s.y1); ctx.lineTo(s.x2, s.y2); ctx.stroke();
+  }
+  for (const r of rings) {
+    ctx.strokeStyle = `rgba(120,255,255,${Math.max(0, 1 - r.r / (PING_RADIUS + 20)) * 0.6})`;
+    ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(r.x, r.y, Math.min(r.r, PING_RADIUS), 0, 7); ctx.stroke();
+  }
+  const e = cc(exitCell % W, (exitCell / W) | 0);
+  ctx.fillStyle = `rgba(255,220,80,${0.35 + 0.25 * Math.sin(now * 3)})`;
+  ctx.beginPath(); ctx.arc(e.x, e.y, 9, 0, 7); ctx.fill();
+  for (const g of guards) {
+    const a = 1 - (now - g.blip) / 1.2; if (a <= 0) continue;
+    ctx.fillStyle = `rgba(255,70,70,${a})`; ctx.beginPath(); ctx.arc(g.x, g.y, 7, 0, 7); ctx.fill();
+  }
+  ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(player.x, player.y, PLAYER_R - 2, 0, 7); ctx.fill();
+  ctx.restore();
+  if (state !== 'playing') {
+    ctx.fillStyle = 'rgba(0,0,0,.6)'; ctx.fillRect(0, canvas.height / 2 - 30, canvas.width, 60);
+    ctx.fillStyle = '#9fe'; ctx.font = '24px monospace'; ctx.textAlign = 'center';
+    ctx.fillText(msg, canvas.width / 2, canvas.height / 2 + 8);
+  }
+  hud.textContent = `Level ${level}  |  Pings left: ${pingsLeft}  |  WASD/arrows move, Space ping, R retry`;
+}
+
+let last = performance.now();
+function frame(t) { const dt = Math.min(0.05, (t - last) / 1000); last = t; update(dt); draw(); requestAnimationFrame(frame); }
+
+newLevel(startLevel);
+requestAnimationFrame(frame);
+
+// Test hook
+window.__echoVault = {
+  get state() { return state; }, get level() { return level; }, get player() { return player; },
+  get guards() { return guards; }, get pingsLeft() { return pingsLeft; }, get W() { return W; },
+  get segs() { return segs; },
+  solvePath() { const a = cellOf(player); return bfs(a.cy * W + a.cx, exitCell).map(c => cc(c % W, (c / W) | 0)); },
+  cellCenter(c) { return cc(c % W, (c / W) | 0); },
+};
+</script>
+</body>
+</html>
