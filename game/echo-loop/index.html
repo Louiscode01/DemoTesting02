@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Echo Loop</title>
+<style>body{margin:0;background:#111;color:#ddd;font:14px monospace;text-align:center}canvas{background:#1b1f2a;margin-top:8px;border:1px solid #333}</style></head>
+<body>
+<canvas id="c" width="800" height="480"></canvas>
+<div>Arrows/AD move, Up/W/Space jump &middot; <b>R</b> = end recording, start loop (your past self replays) &middot; <b>X</b> = clear echoes</div>
+<script>
+// Echo Loop: single-screen puzzle platformer. Record a run, then cooperate with the replay ("echo").
+const W=800,H=480,T=1/60,GRAV=0.6,SPEED=3.2,JUMP=-11,MAXREC=600,PW=18,PH=26;
+// Levels: solid rects [x,y,w,h]; buttons [x,y,w] (pressure plates); door [x,y,w,h] open while any button pressed;
+// each level: start, exit, maxEchoes
+const LEVELS=[
+ {name:"1: Warm-up (reach the exit)",start:[40,400],exit:[730,400,30,40],solids:[[0,440,800,40]],buttons:[],door:null,maxEchoes:1},
+ {name:"2: Hold the plate",start:[40,400],exit:[730,400,30,40],solids:[[0,440,800,40]],
+  buttons:[[200,432,50]],door:[500,300,20,140],maxEchoes:1},
+ {name:"3: Two plates",start:[40,400],exit:[740,160,30,40],
+  solids:[[0,440,800,40],[600,200,200,20]],buttons:[[150,432,50],[330,432,50]],door:[480,300,20,140],maxEchoes:2},
+ {name:"4: Stairs of echoes",start:[40,400],exit:[740,100,30,40],
+  solids:[[0,440,800,40],[560,140,240,20],[420,330,110,16]],buttons:[[120,432,50],[440,322,50]],door:[330,0,20,440],maxEchoes:2}
+];
+const cv=document.getElementById('c'),g=cv.getContext('2d');
+const keys={};
+addEventListener('keydown',e=>{keys[e.code]=1;if(e.code.startsWith('Arrow')||e.code=='Space')e.preventDefault();
+  if(e.code=='KeyR')endRecording(); if(e.code=='KeyX')clearEchoes();});
+addEventListener('keyup',e=>keys[e.code]=0);
+let S;
+function liveInput(){return {l:!!(keys.ArrowLeft||keys.KeyA),r:!!(keys.ArrowRight||keys.KeyD),j:!!(keys.ArrowUp||keys.KeyW||keys.Space)};}
+function mkBody(lv){return {x:lv.start[0],y:lv.start[1],vx:0,vy:0,ground:false};}
+function loadLevel(i){const lv=LEVELS[i];S={lvl:i,lv,t:0,player:mkBody(lv),rec:[],echoes:[],won:false,doorOpen:false,allWon:false};}
+function endRecording(){ if(S.won||S.rec.length<5)return;
+  if(S.echoes.length>=S.lv.maxEchoes)S.echoes.shift();
+  S.echoes.push({inputs:S.rec,body:null});resetRun();}
+function clearEchoes(){S.echoes=[];resetRun();}
+function resetRun(){S.t=0;S.rec=[];S.player=mkBody(S.lv);S.won=false;S.doorOpen=false;for(const e of S.echoes)e.body=mkBody(S.lv);}
+function rects(){const r=S.lv.solids.map(([x,y,w,h])=>({x,y,w,h}));
+  if(S.lv.door&&!S.doorOpen){const[d0,d1,d2,d3]=S.lv.door;r.push({x:d0,y:d1,w:d2,h:d3});}return r;}
+function step(b,inp,rs){
+  b.vx=(inp.r?SPEED:0)-(inp.l?SPEED:0);
+  if(inp.j&&b.ground){b.vy=JUMP;b.ground=false;}
+  b.vy=Math.min(b.vy+GRAV,14);
+  b.x+=b.vx;for(const r of rs)if(hit(b,r)){b.x=b.vx>0?r.x-PW:r.x+r.w;}
+  b.x=Math.max(0,Math.min(W-PW,b.x));
+  b.y+=b.vy;b.ground=false;
+  for(const r of rs)if(hit(b,r)){if(b.vy>0){b.y=r.y-PH;b.ground=true;}else b.y=r.y+r.h;b.vy=0;}
+}
+function hit(b,r){return b.x<r.x+r.w&&b.x+PW>r.x&&b.y<r.y+r.h&&b.y+PH>r.y;}
+function pressed(){const bs=S.lv.buttons;if(!bs.length)return true;
+  const bodies=[S.player,...S.echoes.map(e=>e.body)].filter(Boolean);
+  const states=bs.map(([x,y,w])=>bodies.some(b=>b.x<x+w&&b.x+PW>x&&Math.abs(b.y+PH-(y+8))<6));
+  S.states=states;return states.every(Boolean);}
+function update(){
+  if(S.allWon)return;
+  if(S.won){if(keys.Enter){keys.Enter=0;if(S.lvl+1<LEVELS.length)loadLevel(S.lvl+1);else S.allWon=true;}return;}
+  S.doorOpen=pressed();
+  const rs=rects();
+  if(S.rec.length<MAXREC){const inp=liveInput();S.rec.push(inp);step(S.player,inp,rs);}
+  else endRecording();
+  for(const e of S.echoes){const inp=e.inputs[S.t];if(inp)step(e.body,inp,rs);}
+  S.t++;
+  const[ex,ey,ew,eh]=S.lv.exit;
+  if(S.player.x<ex+ew&&S.player.x+PW>ex&&S.player.y<ey+eh&&S.player.y+PH>ey)S.won=true;
+}
+function draw(){
+  g.clearRect(0,0,W,H);
+  g.fillStyle='#4a5470';for(const[x,y,w,h]of S.lv.solids)g.fillRect(x,y,w,h);
+  S.lv.buttons.forEach(([x,y,w],i)=>{g.fillStyle=(S.states&&S.states[i])?'#6f6':'#c84';g.fillRect(x,y+4,w,8);});
+  if(S.lv.door){const[x,y,w,h]=S.lv.door;g.fillStyle=S.doorOpen?'rgba(255,200,60,.15)':'#e8b030';g.fillRect(x,y,w,h);}
+  const[ex,ey,ew,eh]=S.lv.exit;g.fillStyle='#5cf';g.fillRect(ex,ey,ew,eh);
+  for(const e of S.echoes){g.fillStyle='rgba(120,200,255,.55)';g.fillRect(e.body.x,e.body.y,PW,PH);}
+  g.fillStyle='#fff';g.fillRect(S.player.x,S.player.y,PW,PH);
+  g.fillStyle='#ddd';g.font='14px monospace';g.textAlign='left';
+  g.fillText('Level '+S.lv.name,10,20);
+  g.fillText('Echoes '+S.echoes.length+'/'+S.lv.maxEchoes+'   Rec '+(S.rec.length/60).toFixed(1)+'s/10s',10,40);
+  g.textAlign='center';g.font='24px monospace';
+  if(S.won&&!S.allWon)g.fillText('Solved! Press Enter',W/2,H/2);
+  if(S.allWon)g.fillText('All levels complete!',W/2,H/2);
+}
+loadLevel(0);
+let acc=0,last=performance.now();
+function frame(n){acc+=Math.min(0.1,(n-last)/1000);last=n;while(acc>=T){update();acc-=T;}draw();requestAnimationFrame(frame);}
+requestAnimationFrame(frame);
+window.__echo={get S(){return S},update,loadLevel,endRecording,keys,LEVELS};
+</script></body></html>
