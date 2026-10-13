@@ -1,34 +1,58 @@
 {
-  "cycle": 1,
-  "cycleStarted": "2026-08-31T12:55:00Z",
-  "lastUpdated": "2026-08-31T13:40:00Z",
-  "phase": "done",
-  "nextPhase": "research",
-  "selectedConcept": "Orbit Duel",
+  "cycle": 2,
+  "cycleStarted": "2026-10-13T00:12:00Z",
+  "lastUpdated": "2026-10-13T00:15:00Z",
+  "phase": "design",
+  "nextPhase": "implementation",
+  "selectedConcept": "Lantern Flock",
   "checkpoints": [
     {
       "phase": "research",
       "completedAt": "2026-08-31T12:58:00Z",
-      "outputs": ["docs/concepts.md"],
+      "outputs": [
+        "docs/concepts.md"
+      ],
       "notes": "5 concepts brainstormed and scored; Orbit Duel selected, Gravity Flip Runner as fallback."
     },
     {
       "phase": "design",
       "completedAt": "2026-08-31T13:02:00Z",
-      "outputs": ["docs/design.md"],
+      "outputs": [
+        "docs/design.md"
+      ],
       "notes": "Single-file HTML5 canvas architecture, tunable constants, testing plan defined."
     },
     {
       "phase": "implementation",
       "completedAt": "2026-08-31T13:25:00Z",
-      "outputs": ["game/index.html"],
+      "outputs": [
+        "game/index.html"
+      ],
       "notes": "Self-contained playable prototype: 2-player local gravity-duel arcade game, no build step, no external assets/deps."
     },
     {
       "phase": "testing",
       "completedAt": "2026-08-31T13:40:00Z",
-      "outputs": ["docs/test-results.md"],
+      "outputs": [
+        "docs/test-results.md"
+      ],
       "notes": "Automated Playwright/headless-Chromium smoke tests: load+interaction test and ~6s extended-session test, both PASS. Found and fixed one test-hook staleness bug (window.__orbitDuel.bullets snapshot vs live getter) during testing. Win-condition end-to-end and fun/balance tuning are NOT covered by automated tests -- flagged as follow-up."
+    },
+    {
+      "cycle": 2,
+      "phase": "research",
+      "outputs": [
+        "docs/cycle2-concepts.md"
+      ],
+      "notes": "5 concepts; Lantern Flock selected."
+    },
+    {
+      "cycle": 2,
+      "phase": "design",
+      "outputs": [
+        "docs/cycle2-design.md"
+      ],
+      "notes": "Single-file canvas boids game plan + test plan."
     }
   ],
   "blockers": [],
