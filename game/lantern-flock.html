@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>Lantern Flock</title>
+<style>html,body{margin:0;background:#05060d;color:#cde;font:14px monospace;overflow:hidden}
+canvas{display:block;margin:0 auto;background:#07091a;cursor:none}</style></head>
+<body><canvas id="c" width="960" height="540"></canvas>
+<script>
+// ---- Constants (tunables) ----
+const W=960,H=540,FLOCK_N=40,WISP_N=4,MAX_SPEED=150,WISP_SPEED=95;
+const SEP_R=18,NEIGH_R=55,W_SEP=1.6,W_ALI=0.5,W_COH=0.35;
+const LANTERN_R=170,LANTERN_PULL=2.2,CORE_R=45,LANTERN_KEY_SPEED=300;
+const EXIT={x:W-90,y:H/2-90,w:90,h:180};
+const cv=document.getElementById('c'),ctx=cv.getContext('2d');
+let lantern,boids,wisps,saved,lost,phase,time;
+const keys=new Set();
+const rnd=(a,b)=>a+Math.random()*(b-a);
+function reset(){
+  lantern={x:120,y:H/2};saved=0;lost=0;phase='playing';time=0;
+  boids=Array.from({length:FLOCK_N},()=>({x:rnd(40,140),y:rnd(H/2-60,H/2+60),vx:rnd(-20,20),vy:rnd(-20,20),alive:true}));
+  wisps=Array.from({length:WISP_N},(_,i)=>({x:rnd(400,W-200),y:(i+0.5)*H/WISP_N,vx:rnd(-30,30),vy:rnd(-30,30)}));
+}
+function limit(o,m){const s=Math.hypot(o.vx,o.vy);if(s>m){o.vx*=m/s;o.vy*=m/s;}}
+function step(dt){
+  if(phase!=='playing')return;
+  time+=dt;
+  if(keys.has('arrowleft')||keys.has('a'))lantern.x-=LANTERN_KEY_SPEED*dt;
+  if(keys.has('arrowright')||keys.has('d'))lantern.x+=LANTERN_KEY_SPEED*dt;
+  if(keys.has('arrowup')||keys.has('w'))lantern.y-=LANTERN_KEY_SPEED*dt;
+  if(keys.has('arrowdown')||keys.has('s'))lantern.y+=LANTERN_KEY_SPEED*dt;
+  lantern.x=Math.max(0,Math.min(W,lantern.x));lantern.y=Math.max(0,Math.min(H,lantern.y));
+  const act=boids.filter(b=>b.alive);
+  for(const b of act){
+    let sx=0,sy=0,ax=0,ay=0,cx=0,cy=0,n=0;
+    for(const o of act){if(o===b)continue;const dx=o.x-b.x,dy=o.y-b.y,d=Math.hypot(dx,dy);
+      if(d<NEIGH_R){n++;ax+=o.vx;ay+=o.vy;cx+=o.x;cy+=o.y;if(d<SEP_R&&d>0){sx-=dx/d*(SEP_R-d);sy-=dy/d*(SEP_R-d);}}}
+    if(n){b.vx+=(sx*W_SEP+(ax/n-b.vx)*W_ALI+(cx/n-b.x)*W_COH)*dt*2;b.vy+=(sy*W_SEP+(ay/n-b.vy)*W_ALI+(cy/n-b.y)*W_COH)*dt*2;}
+    const dx=lantern.x-b.x,dy=lantern.y-b.y,d=Math.hypot(dx,dy);
+    if(d<LANTERN_R&&d>1){const f=LANTERN_PULL*(1-d/LANTERN_R)*MAX_SPEED;b.vx+=dx/d*f*dt;b.vy+=dy/d*f*dt;}
+    else{b.vx+=rnd(-1,1)*60*dt;b.vy+=rnd(-1,1)*60*dt;}
+    if(b.x<20)b.vx+=200*dt;if(b.x>W-5)b.vx-=200*dt;if(b.y<20)b.vy+=200*dt;if(b.y>H-20)b.vy-=200*dt;
+    limit(b,MAX_SPEED);b.x+=b.vx*dt;b.y+=b.vy*dt;
+    if(b.x>EXIT.x&&b.y>EXIT.y&&b.y<EXIT.y+EXIT.h){b.alive=false;saved++;}
+  }
+  for(const w of wisps){
+    let tx=null,best=1e9;
+    for(const b of boids){if(!b.alive)continue;const d=Math.hypot(b.x-w.x,b.y-w.y);if(d<best){best=d;tx=b;}}
+    if(tx&&best<260){w.vx+=(tx.x-w.x)/best*120*dt;w.vy+=(tx.y-w.y)/best*120*dt;}
+    else{w.vx+=rnd(-1,1)*80*dt;w.vy+=rnd(-1,1)*80*dt;}
+    const ld=Math.hypot(w.x-lantern.x,w.y-lantern.y);
+    if(ld<CORE_R&&ld>0){w.vx+=(w.x-lantern.x)/ld*500*dt;w.vy+=(w.y-lantern.y)/ld*500*dt;}
+    limit(w,WISP_SPEED);w.x+=w.vx*dt;w.y+=w.vy*dt;
+    if(w.x<0||w.x>W)w.vx*=-1;if(w.y<0||w.y>H)w.vy*=-1;
+    w.x=Math.max(0,Math.min(W,w.x));w.y=Math.max(0,Math.min(H,w.y));
+    for(const b of boids)if(b.alive&&Math.hypot(b.x-w.x,b.y-w.y)<14){b.alive=false;lost++;}
+  }
+  if(saved+lost>=FLOCK_N)phase='over';
+}
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='rgba(80,255,160,0.12)';ctx.fillRect(EXIT.x,EXIT.y,EXIT.w,EXIT.h);
+  ctx.fillStyle='#6fa';ctx.fillText('EXIT',EXIT.x+25,EXIT.y-6);
+  let g=ctx.createRadialGradient(lantern.x,lantern.y,4,lantern.x,lantern.y,LANTERN_R);
+  g.addColorStop(0,'rgba(255,220,120,0.55)');g.addColorStop(1,'rgba(255,200,80,0)');
+  ctx.fillStyle=g;ctx.beginPath();ctx.arc(lantern.x,lantern.y,LANTERN_R,0,7);ctx.fill();
+  ctx.fillStyle='#ffe9a0';ctx.beginPath();ctx.arc(lantern.x,lantern.y,6,0,7);ctx.fill();
+  for(const b of boids){if(!b.alive)continue;ctx.fillStyle='#9ff';ctx.shadowColor='#6df';ctx.shadowBlur=8;
+    ctx.beginPath();ctx.arc(b.x,b.y,3,0,7);ctx.fill();}
+  ctx.shadowBlur=0;
+  for(const w of wisps){ctx.fillStyle='rgba(120,40,160,0.85)';ctx.beginPath();ctx.arc(w.x,w.y,13,0,7);ctx.fill();
+    ctx.fillStyle='#f4f';ctx.fillRect(w.x-5,w.y-3,3,3);ctx.fillRect(w.x+2,w.y-3,3,3);}
+  ctx.fillStyle='#cde';ctx.fillText(`Saved ${saved}  Lost ${lost}  Alive ${FLOCK_N-saved-lost}`,12,20);
+  ctx.fillText('Mouse / WASD moves the lantern. R restarts.',12,38);
+  if(phase==='over'){ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,W,H);ctx.fillStyle='#fff';ctx.font='28px monospace';
+    ctx.fillText(saved>=FLOCK_N/2?`YOU WIN - ${saved}/${FLOCK_N} saved`:`YOU LOSE - only ${saved}/${FLOCK_N} saved`,230,H/2);
+    ctx.font='14px monospace';ctx.fillText('Press R to restart',400,H/2+30);}
+}
+let last=performance.now();
+function loop(t){const dt=Math.min(0.05,(t-last)/1000);last=t;step(dt);draw();requestAnimationFrame(loop);}
+addEventListener('keydown',e=>{const k=e.key.toLowerCase();keys.add(k);if(k==='r')reset();});
+addEventListener('keyup',e=>keys.delete(e.key.toLowerCase()));
+cv.addEventListener('mousemove',e=>{const r=cv.getBoundingClientRect();lantern.x=(e.clientX-r.left)*W/r.width;lantern.y=(e.clientY-r.top)*H/r.height;});
+reset();requestAnimationFrame(loop);
+// ---- Test hook ----
+window.__flock={get phase(){return phase},get saved(){return saved},get lost(){return lost},get boids(){return boids},get wisps(){return wisps},
+  get lantern(){return lantern},step,reset,setWisps(n){wisps.length=n}};
+</script></body></html>

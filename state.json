@@ -1,9 +1,9 @@
 {
   "cycle": 2,
   "cycleStarted": "2026-10-13T00:12:00Z",
-  "lastUpdated": "2026-10-13T00:15:00Z",
-  "phase": "design",
-  "nextPhase": "implementation",
+  "lastUpdated": "2026-10-13T00:30:00Z",
+  "phase": "done",
+  "nextPhase": "research",
   "selectedConcept": "Lantern Flock",
   "checkpoints": [
     {
@@ -53,14 +53,31 @@
         "docs/cycle2-design.md"
       ],
       "notes": "Single-file canvas boids game plan + test plan."
+    },
+    {
+      "cycle": 2,
+      "phase": "implementation",
+      "outputs": [
+        "game/lantern-flock.html"
+      ],
+      "notes": "Playable single-file boids shepherd game."
+    },
+    {
+      "cycle": 2,
+      "phase": "testing",
+      "outputs": [
+        "docs/cycle2-test-results.md",
+        "tests/lantern-flock.test.mjs"
+      ],
+      "notes": "4 automated tests PASS; balance probe done; no human playtest."
     }
   ],
   "blockers": [],
   "followUps": [
-    "Human/manual playtest of Orbit Duel for feel/balance tuning (SHIP_THRUST, SHIP_DRAG, G, BULLET_SPEED).",
-    "Automated end-to-end test of the win condition + restart flow.",
-    "Consider a simple AI opponent or additional modes if this concept is revisited in a future cycle."
+    "Human playtest of Lantern Flock for feel/tuning.",
+    "Add levels/walls to Lantern Flock.",
+    "Carried over: Orbit Duel playtest + win-condition test."
   ],
   "budgetNotes": "Single-session run, no subagent fan-out used to conserve budget. Implementation kept to one self-contained HTML file (no build step) to keep scope tight. Cycle 1 completed fully within budget with no usage-limit warning encountered.",
-  "resumeInstructions": "Cycle 1 is complete (phase: done) with valid outputs at every checkpoint -- do not re-execute cycle 1's research/design/implementation/testing phases. On next invocation, start Cycle 2 at 'research': read docs/concepts.md for prior art (avoid re-proposing Orbit Duel/Gravity Flip Runner/Color Bind/Signal Weaver/Chrono Loop verbatim; a genuine evolution of one is fine) and consider addressing the 'followUps' list above (e.g. iterating on Orbit Duel) as one of the new cycle's candidate concepts."
+  "resumeInstructions": "Cycle 2 (Lantern Flock) complete; do not redo. Next invocation: start Cycle 3 at research, avoiding Cycle 1 and 2 concepts (see docs/concepts.md, docs/cycle2-concepts.md); may evolve one."
 }
