@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Slingshot Courier</title>
+<style>
+  html, body { margin:0; height:100%; background:#070a12; color:#e8ecf4; font-family:'Courier New',monospace; overflow:hidden; }
+  #wrap { display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; }
+  canvas { background:#070a12; border:1px solid #2a3040; box-shadow:0 0 40px rgba(80,120,255,.15); max-width:100%; touch-action:none; cursor:crosshair; }
+  #hint { margin-top:8px; font-size:12px; color:#8b93a7; text-align:center; max-width:800px; padding:0 8px; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="game" width="800" height="500"></canvas>
+  <div id="hint">Drag back from the courier (left) and release to launch &mdash; further drag = more power.
+    Gravity bends the parcel; land it in the green ring. H: hint (after 3 misses) &middot; R: restart level</div>
+</div>
+<script src="sim.js"></script>
+<script>
+(function () {
+  'use strict';
+  const S = window.SlingSim;
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const BASE_SEED = 1;
+  const MAX_DRAG = 120;
+
+  const state = {
+    levelNumber: 1, level: null, shotsUsed: 0, score: 0,
+    mode: 'aim',            // aim | flying | result | gameover
+    drag: null,             // {angle, power}
+    flight: null,           // {path, idx, outcome}
+    message: '', showHint: false, failures: 0
+  };
+
+  function loadLevel(n) {
+    state.levelNumber = n;
+    state.level = S.generate(n, BASE_SEED);
+    state.shotsUsed = 0; state.failures = 0; state.showHint = false;
+    state.mode = 'aim'; state.drag = null; state.flight = null;
+    state.message = 'Level ' + n;
+  }
+
+  function fire(angle, power) {
+    if (state.mode !== 'aim') return false;
+    const res = S.simulate(state.level, angle, power, { wantPath: true });
+    state.shotsUsed++;
+    state.flight = { path: res.path, idx: 0, outcome: res.outcome };
+    state.mode = 'flying'; state.drag = null;
+    return true;
+  }
+
+  function finishFlight() {
+    const o = state.flight.outcome;
+    if (o === 'hit') {
+      state.score += Math.max(1, state.level.maxShots - state.shotsUsed + 1);
+      state.message = 'Delivered! Click / press Space for next level';
+      state.mode = 'result';
+    } else {
+      state.failures++;
+      if (state.shotsUsed >= state.level.maxShots) {
+        state.message = 'Out of shots. Click / press R to retry the level';
+        state.mode = 'gameover';
+      } else {
+        state.message = (o === 'crash' ? 'Crashed into a planet' : 'Missed') + ' - ' +
+          (state.level.maxShots - state.shotsUsed) + ' shots left';
+        state.mode = 'aim';
+      }
+      if (state.failures >= 3) state.showHint = true;
+    }
+  }
+
+  function advance() {
+    if (state.mode === 'result') loadLevel(state.levelNumber + 1);
+    else if (state.mode === 'gameover') loadLevel(state.levelNumber);
+  }
+
+  // ---- input ----
+  function canvasPos(e) {
+    const r = canvas.getBoundingClientRect();
+    return { x: (e.clientX - r.left) * canvas.width / r.width, y: (e.clientY - r.top) * canvas.height / r.height };
+  }
+  function dragFrom(p) {
+    const s = state.level.start;
+    const dx = s.x - p.x, dy = s.y - p.y;           // slingshot: pull back, launch opposite
+    const d = Math.hypot(dx, dy);
+    return { angle: Math.atan2(dy, dx), power: Math.min(1, d / MAX_DRAG), dist: d };
+  }
+  canvas.addEventListener('pointerdown', (e) => {
+    if (state.mode === 'result' || state.mode === 'gameover') { advance(); return; }
+    if (state.mode !== 'aim') return;
+    canvas.setPointerCapture(e.pointerId);
+    state.drag = dragFrom(canvasPos(e));
+  });
+  canvas.addEventListener('pointermove', (e) => { if (state.drag) state.drag = dragFrom(canvasPos(e)); });
+  canvas.addEventListener('pointerup', (e) => {
+    if (!state.drag) return;
+    const d = dragFrom(canvasPos(e));
+    if (d.dist < 10) { state.drag = null; return; }  // tiny drag = cancel
+    fire(d.angle, d.power);
+  });
+  window.addEventListener('keydown', (e) => {
+    if (e.code === 'KeyR') loadLevel(state.levelNumber);
+    if (e.code === 'Space') { e.preventDefault(); advance(); }
+    if (e.code === 'KeyH' && state.failures >= 3) state.showHint = !state.showHint;
+  });
+
+  // ---- render ----
+  const bgStars = (() => { const r = S.mulberry32(99), a = []; for (let i = 0; i < 90; i++) a.push([r()*800, r()*500, r()*1.3+.3]); return a; })();
+
+  function render() {
+    const L = state.level;
+    ctx.fillStyle = '#070a12'; ctx.fillRect(0, 0, 800, 500);
+    ctx.fillStyle = '#cfe0ff'; ctx.globalAlpha = .5;
+    for (const s of bgStars) { ctx.beginPath(); ctx.arc(s[0], s[1], s[2], 0, 7); ctx.fill(); }
+    ctx.globalAlpha = 1;
+
+    // target
+    ctx.strokeStyle = '#4eff9a'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(L.target.x, L.target.y, L.target.r, 0, 7); ctx.stroke();
+    ctx.fillStyle = 'rgba(78,255,154,.15)'; ctx.fill();
+
+    // planets
+    for (const p of L.planets) {
+      const g = ctx.createRadialGradient(p.x, p.y, p.r * .5, p.x, p.y, p.r * 2.2);
+      g.addColorStop(0, 'rgba(120,150,255,.35)'); g.addColorStop(1, 'rgba(120,150,255,0)');
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(p.x, p.y, p.r * 2.2, 0, 7); ctx.fill();
+      ctx.fillStyle = '#7f93d9'; ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, 7); ctx.fill();
+    }
+
+    // hint
+    if (state.showHint && L.solution) {
+      const hp = S.preview(L, L.solution.angle, L.solution.power);
+      ctx.fillStyle = 'rgba(255,220,120,.7)';
+      for (let i = 0; i < hp.length; i += 6) { ctx.beginPath(); ctx.arc(hp[i].x, hp[i].y, 2, 0, 7); ctx.fill(); }
+    }
+
+    // aim preview (partial path only)
+    if (state.drag && state.drag.dist >= 10) {
+      const pp = S.preview(L, state.drag.angle, state.drag.power);
+      ctx.fillStyle = 'rgba(255,255,255,.8)';
+      for (let i = 0; i < pp.length; i += 5) { ctx.beginPath(); ctx.arc(pp[i].x, pp[i].y, 1.8, 0, 7); ctx.fill(); }
+      ctx.strokeStyle = 'rgba(255,255,255,.4)'; ctx.lineWidth = 2;
+      const s = L.start;
+      ctx.beginPath(); ctx.moveTo(s.x, s.y);
+      ctx.lineTo(s.x - Math.cos(state.drag.angle) * state.drag.dist, s.y - Math.sin(state.drag.angle) * state.drag.dist);
+      ctx.stroke();
+    }
+
+    // flight
+    if (state.flight) {
+      const f = state.flight;
+      ctx.strokeStyle = 'rgba(255,200,90,.6)'; ctx.lineWidth = 2; ctx.beginPath();
+      for (let i = 0; i <= f.idx && i < f.path.length; i += 2) {
+        const q = f.path[i]; i === 0 ? ctx.moveTo(q.x, q.y) : ctx.lineTo(q.x, q.y);
+      }
+      ctx.stroke();
+      const q = f.path[Math.min(f.idx, f.path.length - 1)];
+      ctx.fillStyle = '#ffd25a'; ctx.beginPath(); ctx.arc(q.x, q.y, 5, 0, 7); ctx.fill();
+    }
+
+    // courier
+    ctx.fillStyle = '#4ec9ff'; ctx.beginPath(); ctx.arc(L.start.x, L.start.y, 8, 0, 7); ctx.fill();
+
+    // HUD
+    ctx.font = '16px "Courier New", monospace'; ctx.textAlign = 'left'; ctx.fillStyle = '#e8ecf4';
+    ctx.fillText('Level ' + state.levelNumber + '   Shots ' + (L.maxShots - state.shotsUsed) + '/' + L.maxShots + '   Score ' + state.score, 14, 24);
+    ctx.textAlign = 'center'; ctx.fillStyle = '#ffd25a'; ctx.fillText(state.message, 400, 486);
+    ctx.textAlign = 'left';
+  }
+
+  // ---- loop ----
+  const STEPS_PER_FRAME = 4;
+  function frame() {
+    if (state.mode === 'flying') {
+      state.flight.idx += STEPS_PER_FRAME;
+      if (state.flight.idx >= state.flight.path.length - 1) { state.flight.idx = state.flight.path.length - 1; finishFlight(); }
+    }
+    render();
+    requestAnimationFrame(frame);
+  }
+  loadLevel(1);
+  requestAnimationFrame(frame);
+
+  window.__slingshot = {
+    state, fire, advance, loadLevel,
+    get mode() { return state.mode; },
+    get level() { return state.level; },
+    get levelNumber() { return state.levelNumber; }
+  };
+})();
+</script>
+</body>
+</html>

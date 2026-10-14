@@ -1,18 +1,19 @@
 {
   "cycle": 2,
   "cycleStarted": "2026-10-14T00:12:00Z",
-  "lastUpdated": "2026-10-14T00:20:00Z",
-  "phase": "design",
-  "nextPhase": "implementation",
+  "lastUpdated": "2026-10-14T00:40:00Z",
+  "phase": "done",
+  "nextPhase": "research",
   "selectedConcept": "Slingshot Courier",
   "blockers": [],
   "followUps": [
-    "Human/manual playtest of Orbit Duel for feel/balance tuning (SHIP_THRUST, SHIP_DRAG, G, BULLET_SPEED).",
-    "Automated end-to-end test of the win condition + restart flow.",
-    "Consider a simple AI opponent or additional modes if this concept is revisited in a future cycle."
+    "Human playtest of Slingshot Courier for feel/difficulty tuning.",
+    "Touch-device test.",
+    "Verify solvability beyond level 12; add difficulty curve (moving planets?).",
+    "Still open from cycle 1: Orbit Duel tuning/AI/win-flow test."
   ],
-  "budgetNotes": "Single-session run, no subagent fan-out used to conserve budget. Implementation kept to one self-contained HTML file (no build step) to keep scope tight. Cycle 1 completed fully within budget with no usage-limit warning encountered.",
-  "resumeInstructions": "Cycle 1 is complete (phase: done) with valid outputs at every checkpoint -- do not re-execute cycle 1's research/design/implementation/testing phases. On next invocation, start Cycle 2 at 'research': read docs/concepts.md for prior art (avoid re-proposing Orbit Duel/Gravity Flip Runner/Color Bind/Signal Weaver/Chrono Loop verbatim; a genuine evolution of one is fine) and consider addressing the 'followUps' list above (e.g. iterating on Orbit Duel) as one of the new cycle's candidate concepts.",
+  "budgetNotes": "Cycle 2 done in a single session, no subagents, no usage warnings.",
+  "resumeInstructions": "Cycle 2 complete (phase: done); do not redo its phases. Next invocation: start Cycle 3 at 'research'. Avoid re-proposing concepts in docs/concepts.md and docs/concepts-cycle2.md except as genuine evolutions. Run tests: node --test tests/slingshot.test.js; NODE_PATH=/opt/node22/lib/node_modules node tests/slingshot.e2e.js.",
   "history": [
     {
       "cycle": 1,
@@ -74,6 +75,25 @@
         "docs/design-cycle2.md"
       ],
       "notes": "Pure sim.js + canvas UI + Node tests + Playwright e2e."
+    },
+    {
+      "phase": "implementation",
+      "completedAt": "2026-10-14T00:32:00Z",
+      "outputs": [
+        "game/slingshot/sim.js",
+        "game/slingshot/index.html"
+      ],
+      "notes": "Pure sim core + canvas UI; drag-to-aim slingshot, partial preview, hint, scoring, verified-solvable procedural levels."
+    },
+    {
+      "phase": "testing",
+      "completedAt": "2026-10-14T00:40:00Z",
+      "outputs": [
+        "tests/slingshot.test.js",
+        "tests/slingshot.e2e.js",
+        "docs/test-results-cycle2.md"
+      ],
+      "notes": "9/9 Node unit tests and Playwright e2e PASS (win flow, fail/retry, mouse drag)."
     }
   ]
 }
