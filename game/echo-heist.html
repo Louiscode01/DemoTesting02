@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Echo Heist</title>
+<style>
+html,body{margin:0;background:#10131a;color:#cfd8e3;font-family:system-ui,sans-serif;text-align:center}
+canvas{display:block;margin:12px auto;background:#161b26;border:1px solid #2a3345}
+p{margin:4px;font-size:14px}
+</style></head><body>
+<canvas id="c" width="640" height="320"></canvas>
+<p>Move: WASD / arrows &middot; <b>R</b>: end loop (your run becomes an echo) &middot; <b>Backspace</b>: reset level &middot; <b>Enter</b>: next level</p>
+<script>
+// ---- Constants ----
+const TILE = 40, SPEED = 3, PSIZE = 24, LOOP_TICKS = 900, MAX_ECHOES = 3, TICK_MS = 1000 / 60;
+
+// ---- Levels ----
+const LEVELS = [
+  { name: "Hold the plate", map: [
+    "################",
+    "#S.....#.......#",
+    "#......#.......#",
+    "#......A......E#",
+    "#......#.......#",
+    "#.a....#.......#",
+    "#......#.......#",
+    "################"] },
+  { name: "Two keys", map: [
+    "################",
+    "#S...#....#....#",
+    "#....#....#....#",
+    "#.a..A....B...E#",
+    "#....#....#....#",
+    "#.b..#....#....#",
+    "################"] },
+  { name: "Chain reaction", map: [
+    "################",
+    "#S...#....#....#",
+    "#....#....#....#",
+    "#.a..A..b.B...E#",
+    "#....#....#....#",
+    "#....#....#....#",
+    "################"] },
+];
+// ---- Pure simulation ----
+// Door letters exclude S (start) and E (exit), which are reserved tile markers.
+const isDoor = ch => ch >= "A" && ch <= "Z" && ch !== "S" && ch !== "E";
+function createSim(idx) {
+  const map = LEVELS[idx].map, tiles = [];
+  let start = null, exit = null;
+  const plates = {}, doors = {};
+  map.forEach((row, ty) => {
+    tiles.push([...row]);
+    [...row].forEach((ch, tx) => {
+      if (ch === "S") start = { x: tx * TILE + TILE / 2, y: ty * TILE + TILE / 2 };
+      else if (ch === "E") exit = { tx, ty };
+      else if (ch >= "a" && ch <= "z") (plates[ch] ||= []).push({ tx, ty });
+      else if (isDoor(ch)) (doors[ch.toLowerCase()] ||= []).push({ tx, ty });
+    });
+  });
+  return { idx, tiles, start, exit, plates, doors, tick: 0, loops: 1, echoes: [],
+           pos: { ...start }, rec: [], won: false };
+}
+function echoPos(e, t) { return e[Math.min(t, e.length - 1)]; }
+function onTile(p, t) {
+  return Math.floor(p.x / TILE) === t.tx && Math.floor(p.y / TILE) === t.ty;
+}
+function isOpen(sim, key, extra) {
+  const actors = sim.echoes.map(e => echoPos(e, sim.tick)).concat(extra ? [extra] : []);
+  return (sim.plates[key] || []).some(pl => actors.some(a => onTile(a, pl)));
+}
+function solidAt(sim, px, py, ch) {
+  if (ch === "#") return true;
+  if (isDoor(ch)) return !isOpen(sim, ch.toLowerCase(), sim.pos);
+  return false;
+}
+function collides(sim, x, y) {
+  const h = PSIZE / 2;
+  for (const [cx, cy] of [[x - h, y - h], [x + h - 1, y - h], [x - h, y + h - 1], [x + h - 1, y + h - 1]]) {
+    const ch = (sim.tiles[Math.floor(cy / TILE)] || [])[Math.floor(cx / TILE)];
+    if (ch === undefined || solidAt(sim, cx, cy, ch)) return true;
+  }
+  return false;
+}
+function step(sim, input) {
+  if (sim.won) return;
+  const wasStuck = collides(sim, sim.pos.x, sim.pos.y); // allow leaving a door that just closed
+  const nx = sim.pos.x + (input.dx || 0) * SPEED, ny = sim.pos.y + (input.dy || 0) * SPEED;
+  if (wasStuck || !collides(sim, nx, sim.pos.y)) sim.pos.x = nx;
+  if (wasStuck || !collides(sim, sim.pos.x, ny)) sim.pos.y = ny;
+  sim.rec.push({ x: sim.pos.x, y: sim.pos.y });
+  sim.tick++;
+  if (onTile(sim.pos, sim.exit)) sim.won = true;
+  else if (sim.tick >= LOOP_TICKS) endLoop(sim);
+}
+function endLoop(sim) {
+  if (sim.won) return;
+  sim.echoes.push(sim.rec);
+  if (sim.echoes.length > MAX_ECHOES) sim.echoes.shift();
+  sim.rec = []; sim.tick = 0; sim.loops++; sim.pos = { ...sim.start };
+}
+
+// ---- Rendering / input / loop (browser only) ----
+if (typeof document !== "undefined") {
+  const cv = document.getElementById("c"), ctx = cv.getContext("2d");
+  let sim = createSim(0);
+  const keys = new Set();
+  addEventListener("keydown", e => {
+    keys.add(e.key.toLowerCase());
+    if (e.key.toLowerCase() === "r") endLoop(sim);
+    if (e.key === "Backspace") sim = createSim(sim.idx);
+    if (e.key === "Enter" && sim.won) sim = createSim((sim.idx + 1) % LEVELS.length);
+    if (e.key.startsWith("Arrow") || e.key === " " || e.key === "Backspace") e.preventDefault();
+  });
+  addEventListener("keyup", e => keys.delete(e.key.toLowerCase()));
+  const inp = () => ({
+    dx: (keys.has("d") || keys.has("arrowright") ? 1 : 0) - (keys.has("a") || keys.has("arrowleft") ? 1 : 0),
+    dy: (keys.has("s") || keys.has("arrowdown") ? 1 : 0) - (keys.has("w") || keys.has("arrowup") ? 1 : 0) });
+  function draw() {
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    sim.tiles.forEach((row, ty) => row.forEach((ch, tx) => {
+      const x = tx * TILE, y = ty * TILE;
+      if (ch === "#") { ctx.fillStyle = "#2c3548"; ctx.fillRect(x, y, TILE, TILE); }
+      else if (ch === "E") { ctx.fillStyle = "#3ddc84"; ctx.fillRect(x + 6, y + 6, TILE - 12, TILE - 12); }
+      else if (ch >= "a" && ch <= "z") {
+        ctx.fillStyle = isOpen(sim, ch, sim.pos) ? "#ffd166" : "#7a6a3a"; ctx.fillRect(x + 8, y + 8, TILE - 16, TILE - 16);
+        ctx.fillStyle = "#10131a"; ctx.fillText(ch, x + 17, y + 24);
+      } else if (isDoor(ch) && !isOpen(sim, ch.toLowerCase(), sim.pos)) {
+        ctx.fillStyle = "#e05263"; ctx.fillRect(x + 4, y, TILE - 8, TILE);
+      }
+    }));
+    sim.echoes.forEach(e => { const p = echoPos(e, sim.tick);
+      ctx.fillStyle = "rgba(120,180,255,.55)"; ctx.fillRect(p.x - 12, p.y - 12, PSIZE, PSIZE); });
+    ctx.fillStyle = "#fff"; ctx.fillRect(sim.pos.x - 12, sim.pos.y - 12, PSIZE, PSIZE);
+    ctx.fillStyle = "#cfd8e3"; ctx.font = "13px system-ui";
+    ctx.fillText(`Level ${sim.idx + 1}: ${LEVELS[sim.idx].name}   Loop ${sim.loops}   Echoes ${sim.echoes.length}   Time ${((LOOP_TICKS - sim.tick) / 60).toFixed(1)}s`, 8, cv.height - 8);
+    if (sim.won) { ctx.font = "28px system-ui"; ctx.fillStyle = "#3ddc84"; ctx.fillText("Heist complete! Enter = next level", 110, 150); }
+  }
+  let last = performance.now(), acc = 0;
+  (function frame(now) {
+    acc += Math.min(now - last, 100); last = now;
+    while (acc >= TICK_MS) { step(sim, inp()); acc -= TICK_MS; }
+    draw(); requestAnimationFrame(frame);
+  })(last);
+  window.EchoHeist = { createSim, step, endLoop, get sim() { return sim; }, LEVELS };
+} else {
+  module.exports = { createSim, step, endLoop, LEVELS };
+}
+</script></body></html>
