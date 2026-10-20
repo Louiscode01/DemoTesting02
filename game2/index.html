@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Echo Cavern</title>
+<style>
+  html, body { margin: 0; background: #05070a; color: #9fd; font-family: monospace; height: 100%; overflow: hidden; }
+  body { display: flex; align-items: center; justify-content: center; }
+  canvas { background: #000; border: 1px solid #124; max-width: 100vw; max-height: 100vh; }
+</style>
+</head>
+<body>
+<canvas id="c" width="960" height="640"></canvas>
+<script>
+// ===== Tunable constants =====
+const CELL = 64, WALL_W = 3;
+const PLAYER_R = 8, PLAYER_SPEED = 130;
+const PING_SPEED = 380, PING_MAX = 340, PING_COOLDOWN = 0.6, REVEAL_TIME = 1.6;
+const HEAR_RADIUS = 520, HUNTER_SPEED = 85, HUNTER_WANDER_SPEED = 40, HUNTER_R = 9;
+const START_LIVES = 3;
+
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const W = canvas.width, H = canvas.height;
+
+// ===== Seeded RNG (mulberry32) =====
+let rngState = 1;
+function seedRng(s) { rngState = s >>> 0; }
+function rnd() {
+  rngState = (rngState + 0x6D2B79F5) >>> 0;
+  let t = rngState;
+  t = Math.imul(t ^ (t >>> 15), t | 1);
+  t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+}
+
+// ===== Maze =====
+// cell.w = [N, E, S, W] wall flags; wall reveal timers kept per flag in cell.r
+let cols, rows, grid, ox, oy;
+const DIRS = [[0, -1], [1, 0], [0, 1], [-1, 0]]; // N E S W
+
+function buildMaze(level) {
+  cols = Math.min(14, 8 + Math.floor(level / 2));
+  rows = Math.min(9, 6 + Math.floor(level / 2));
+  ox = Math.floor((W - cols * CELL) / 2);
+  oy = Math.floor((H - rows * CELL) / 2);
+  grid = [];
+  for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++)
+    grid.push({ x, y, w: [true, true, true, true], r: [0, 0, 0, 0], seen: false });
+  const at = (x, y) => (x < 0 || y < 0 || x >= cols || y >= rows) ? null : grid[y * cols + x];
+  const stack = [grid[0]]; grid[0].seen = true;
+  while (stack.length) {
+    const c = stack[stack.length - 1];
+    const opts = [];
+    for (let d = 0; d < 4; d++) {
+      const n = at(c.x + DIRS[d][0], c.y + DIRS[d][1]);
+      if (n && !n.seen) opts.push([d, n]);
+    }
+    if (!opts.length) { stack.pop(); continue; }
+    const [d, n] = opts[Math.floor(rnd() * opts.length)];
+    c.w[d] = false; n.w[(d + 2) % 4] = false; n.seen = true; stack.push(n);
+  }
+  // extra openings create loops
+  const extra = Math.floor(cols * rows * 0.08);
+  for (let i = 0; i < extra; i++) {
+    const c = grid[Math.floor(rnd() * grid.length)];
+    const d = Math.floor(rnd() * 4);
+    const n = at(c.x + DIRS[d][0], c.y + DIRS[d][1]);
+    if (n) { c.w[d] = false; n.w[(d + 2) % 4] = false; }
+  }
+  grid.forEach(c => c.seen = false);
+}
+const cellAt = (x, y) => (x < 0 || y < 0 || x >= cols || y >= rows) ? null : grid[y * cols + x];
+const cellCenter = c => ({ x: ox + (c.x + 0.5) * CELL, y: oy + (c.y + 0.5) * CELL });
+function worldToCell(px, py) {
+  return cellAt(Math.floor((px - ox) / CELL), Math.floor((py - oy) / CELL));
+}
+
+// Wall segments (each shared wall appears once per owning cell flag; reveal both sides)
+function wallSeg(c, d) {
+  const x0 = ox + c.x * CELL, y0 = oy + c.y * CELL;
+  if (d === 0) return [x0, y0, x0 + CELL, y0];
+  if (d === 1) return [x0 + CELL, y0, x0 + CELL, y0 + CELL];
+  if (d === 2) return [x0, y0 + CELL, x0 + CELL, y0 + CELL];
+  return [x0, y0, x0, y0 + CELL];
+}
+function distPointSeg(px, py, s) {
+  const [x1, y1, x2, y2] = s;
+  const dx = x2 - x1, dy = y2 - y1;
+  const t = Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / (dx * dx + dy * dy)));
+  return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
+}
+
+// BFS path between cells over open passages -> array of cells (excluding start)
+function bfsPath(a, b) {
+  if (a === b) return [];
+  const prev = new Map([[a, null]]);
+  const q = [a];
+  while (q.length) {
+    const c = q.shift();
+    if (c === b) break;
+    for (let d = 0; d < 4; d++) {
+      if (c.w[d]) continue;
+      const n = cellAt(c.x + DIRS[d][0], c.y + DIRS[d][1]);
+      if (n && !prev.has(n)) { prev.set(n, c); q.push(n); }
+    }
+  }
+  if (!prev.has(b)) return null;
+  const path = [];
+  for (let c = b; c !== a; c = prev.get(c)) path.push(c);
+  return path.reverse();
+}
+
+// ===== Game state =====
+let state;
+function newGame(seed) {
+  seedRng(seed === undefined ? (Date.now() & 0xffffffff) : seed);
+  state = { level: 1, lives: START_LIVES, score: 0, pings: 0, time: 0, phase: 'playing', msg: '', msgT: 0,
+            pingsRing: [], player: null, hunters: [], exit: null, seed: rngState };
+  startLevel();
+}
+function startLevel() {
+  buildMaze(state.level);
+  state.pings = 0; state.time = 0; state.pingsRing = []; state.cooldown = 0;
+  const s = cellCenter(grid[0]);
+  state.player = { x: s.x, y: s.y };
+  state.exit = grid[grid.length - 1];
+  state.hunters = [];
+  const n = 1 + Math.floor(state.level / 2);
+  const far = grid.filter(c => c.x + c.y >= (cols + rows) / 2);
+  for (let i = 0; i < n; i++) {
+    const c = far[Math.floor(rnd() * far.length)];
+    if (c === state.exit && far.length > 1) { i--; continue; }
+    const p = cellCenter(c);
+    state.hunters.push({ x: p.x, y: p.y, path: [], wander: null, vis: 0, alert: 0 });
+  }
+}
+
+// ===== Input =====
+const keys = new Set();
+addEventListener('keydown', e => {
+  if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(e.key)) e.preventDefault();
+  keys.add(e.key.toLowerCase());
+  if (e.key === ' ' ) ping();
+  if (e.key.toLowerCase() === 'r' && (state.phase === 'over')) newGame();
+});
+addEventListener('keyup', e => keys.delete(e.key.toLowerCase()));
+
+function ping() {
+  if (state.phase !== 'playing' || state.cooldown > 0) return;
+  state.cooldown = PING_COOLDOWN;
+  state.pings++;
+  const p = { x: state.player.x, y: state.player.y, r: 0 };
+  state.pingsRing.push(p);
+  // hunters within hearing range converge on the ping origin
+  const target = worldToCell(p.x, p.y);
+  for (const h of state.hunters) {
+    if (Math.hypot(h.x - p.x, h.y - p.y) <= HEAR_RADIUS) {
+      const hc = worldToCell(h.x, h.y);
+      if (hc && target) { h.path = bfsPath(hc, target) || []; h.alert = 4; h.target = target; }
+    }
+  }
+}
+
+// ===== Movement / collision =====
+function blocked(px, py) {
+  const c = worldToCell(px, py);
+  if (!c) return true;
+  for (let d = 0; d < 4; d++) {
+    if (!c.w[d]) continue;
+    if (distPointSeg(px, py, wallSeg(c, d)) < PLAYER_R + WALL_W / 2) return true;
+  }
+  // neighbouring cells' walls at corners
+  for (let d = 0; d < 4; d++) {
+    const n = cellAt(c.x + DIRS[d][0], c.y + DIRS[d][1]);
+    if (!n) continue;
+    for (let k = 0; k < 4; k++) {
+      if (n.w[k] && distPointSeg(px, py, wallSeg(n, k)) < PLAYER_R + WALL_W / 2) return true;
+    }
+  }
+  return false;
+}
+function movePlayer(dt) {
+  let dx = 0, dy = 0;
+  if (keys.has('a') || keys.has('arrowleft')) dx -= 1;
+  if (keys.has('d') || keys.has('arrowright')) dx += 1;
+  if (keys.has('w') || keys.has('arrowup')) dy -= 1;
+  if (keys.has('s') || keys.has('arrowdown')) dy += 1;
+  const len = Math.hypot(dx, dy) || 1;
+  const vx = dx / len * PLAYER_SPEED * dt, vy = dy / len * PLAYER_SPEED * dt;
+  const p = state.player;
+  if (!blocked(p.x + vx, p.y)) p.x += vx;
+  if (!blocked(p.x, p.y + vy)) p.y += vy;
+}
+
+function updateHunter(h, dt) {
+  h.vis = Math.max(0, h.vis - dt);
+  h.alert = Math.max(0, h.alert - dt);
+  let tx, ty, spd;
+  if (h.path.length) {
+    const c = cellCenter(h.path[0]); tx = c.x; ty = c.y; spd = HUNTER_SPEED;
+  } else {
+    // wander to a random adjacent open cell
+    if (!h.wander) {
+      const hc = worldToCell(h.x, h.y);
+      const opts = [];
+      for (let d = 0; d < 4; d++) if (!hc.w[d]) opts.push(cellAt(hc.x + DIRS[d][0], hc.y + DIRS[d][1]));
+      h.wander = opts[Math.floor(rnd() * opts.length)] || hc;
+    }
+    const c = cellCenter(h.wander); tx = c.x; ty = c.y; spd = HUNTER_WANDER_SPEED;
+  }
+  const dx = tx - h.x, dy = ty - h.y, d = Math.hypot(dx, dy);
+  if (d < 3) { if (h.path.length) h.path.shift(); else h.wander = null; }
+  else { h.x += dx / d * spd * dt; h.y += dy / d * spd * dt; }
+}
+
+function loseLife() {
+  state.lives--;
+  if (state.lives <= 0) { state.phase = 'over'; state.msg = 'GAME OVER - press R'; state.msgT = 1e9; }
+  else { state.msg = 'Caught! Lives left: ' + state.lives; state.msgT = 2; startLevel(); }
+}
+
+function update(dt) {
+  if (state.phase !== 'playing') return;
+  state.time += dt;
+  state.cooldown = Math.max(0, state.cooldown - dt);
+  state.msgT = Math.max(0, state.msgT - dt);
+  movePlayer(dt);
+
+  // decay reveal timers
+  for (const c of grid) for (let d = 0; d < 4; d++) c.r[d] = Math.max(0, c.r[d] - dt);
+
+  // sonar rings reveal walls & hunters in the band they sweep
+  for (const p of state.pingsRing) {
+    const r0 = p.r; p.r += PING_SPEED * dt;
+    for (const c of grid) for (let d = 0; d < 4; d++) {
+      if (!c.w[d]) continue;
+      const [x1, y1, x2, y2] = wallSeg(c, d);
+      // wall is hit if its nearest and farthest points straddle the ring radius this step
+      const near = distPointSeg(p.x, p.y, [x1, y1, x2, y2]);
+      const far = Math.max(Math.hypot(x1 - p.x, y1 - p.y), Math.hypot(x2 - p.x, y2 - p.y));
+      if (near <= p.r && far >= r0) c.r[d] = REVEAL_TIME;
+    }
+    for (const h of state.hunters) {
+      const dist = Math.hypot(h.x - p.x, h.y - p.y);
+      if (dist <= p.r && dist >= r0 - 10) h.vis = 1.2;
+    }
+  }
+  state.pingsRing = state.pingsRing.filter(p => p.r < PING_MAX);
+
+  for (const h of state.hunters) {
+    updateHunter(h, dt);
+    if (Math.hypot(h.x - state.player.x, h.y - state.player.y) < HUNTER_R + PLAYER_R) { loseLife(); return; }
+  }
+
+  if (worldToCell(state.player.x, state.player.y) === state.exit) {
+    const gain = Math.max(0, Math.round(1000 - 50 * state.pings - state.time * 2));
+    state.score += gain;
+    state.level++;
+    state.msg = 'Level clear! +' + gain; state.msgT = 2.5;
+    startLevel();
+  }
+}
+
+// ===== Render =====
+function render() {
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+  // exit beacon (faint, always visible so the goal is findable)
+  const ec = cellCenter(state.exit);
+  const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 300);
+  ctx.fillStyle = `rgba(80,255,160,${0.15 + 0.2 * pulse})`;
+  ctx.beginPath(); ctx.arc(ec.x, ec.y, 14, 0, 7); ctx.fill();
+
+  ctx.lineWidth = WALL_W; ctx.lineCap = 'round';
+  for (const c of grid) for (let d = 0; d < 4; d++) {
+    const a = c.r[d] / REVEAL_TIME;
+    if (!c.w[d] || a <= 0) continue;
+    const [x1, y1, x2, y2] = wallSeg(c, d);
+    ctx.strokeStyle = `rgba(120,220,255,${a})`;
+    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+  }
+  for (const p of state.pingsRing) {
+    ctx.strokeStyle = `rgba(150,230,255,${0.5 * (1 - p.r / PING_MAX)})`;
+    ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, 7); ctx.stroke();
+  }
+  for (const h of state.hunters) {
+    if (h.vis <= 0) continue;
+    ctx.fillStyle = `rgba(255,70,70,${Math.min(1, h.vis)})`;
+    ctx.beginPath(); ctx.arc(h.x, h.y, HUNTER_R, 0, 7); ctx.fill();
+  }
+  ctx.fillStyle = '#dff'; ctx.beginPath(); ctx.arc(state.player.x, state.player.y, PLAYER_R * 0.6, 0, 7); ctx.fill();
+
+  ctx.fillStyle = '#9fd'; ctx.font = '14px monospace'; ctx.textAlign = 'left';
+  ctx.fillText(`Level ${state.level}  Lives ${state.lives}  Pings ${state.pings}  Score ${state.score}`, 12, 20);
+  ctx.fillText('Move: WASD/Arrows   Ping: Space (alerts hunters!)   Reach the green beacon', 12, H - 12);
+  if (state.msgT > 0) {
+    ctx.textAlign = 'center'; ctx.font = '28px monospace'; ctx.fillStyle = '#fff';
+    ctx.fillText(state.msg, W / 2, 50);
+  }
+}
+
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  update(dt); render();
+  requestAnimationFrame(frame);
+}
+
+newGame();
+requestAnimationFrame(frame);
+
+// Test hooks
+window.__echo = {
+  get state() { return state; },
+  get grid() { return grid; }, get cols() { return cols; }, get rows() { return rows; },
+  newGame, ping, update, bfsPath, cellAt, worldToCell, cellCenter, startLevel,
+  consts: { CELL, PING_SPEED, PING_MAX, REVEAL_TIME }
+};
+</script>
+</body>
+</html>
