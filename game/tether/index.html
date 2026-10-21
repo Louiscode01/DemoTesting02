@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Tether Swing</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>html,body{margin:0;background:#10131a;color:#eee;font:14px sans-serif;overflow:hidden}canvas{display:block;margin:0 auto;background:#161b26}</style></head>
+<body><canvas id="c" width="900" height="500"></canvas>
+<script>
+(()=>{
+const W=900,H=500,G=900,RANGE=260,LAVA_SPEED=18,DT=1/120;
+const cv=document.getElementById('c'),ctx=cv.getContext('2d');
+let s;
+function rnd(){s.seed=(s.seed*1664525+1013904223)>>>0;return s.seed/4294967296}
+function reset(seed){
+  s={seed:seed||12345,p:{x:100,y:200,vx:160,vy:0},rope:null,anchors:[],lastAx:200,lava:H-20,t:0,best:s?s.best:0,over:false,hold:false};
+  s.anchors.push({x:200,y:90});s.lastAx=200;spawn();
+}
+function spawn(){
+  while(s.lastAx<s.p.x+W*1.5){
+    s.lastAx+=120+rnd()*110;
+    s.anchors.push({x:s.lastAx,y:60+rnd()*170});
+  }
+}
+function attach(){
+  if(s.rope||s.over)return;
+  let best=null,bd=1e9;
+  for(const a of s.anchors){
+    const dx=a.x-s.p.x,dy=a.y-s.p.y,d=Math.hypot(dx,dy);
+    if(dx>-20&&dy<0&&d<RANGE&&d<bd){bd=d;best=a}
+  }
+  if(best)s.rope={a:best,len:bd};
+}
+function step(){
+  if(s.over)return;
+  const p=s.p;
+  p.vy+=G*DT;
+  p.x+=p.vx*DT;p.y+=p.vy*DT;
+  if(s.rope){
+    const a=s.rope.a;let dx=p.x-a.x,dy=p.y-a.y,d=Math.hypot(dx,dy)||1;
+    if(d>s.rope.len){
+      const nx=dx/d,ny=dy/d;
+      p.x=a.x+nx*s.rope.len;p.y=a.y+ny*s.rope.len;
+      const vr=p.vx*nx+p.vy*ny;
+      if(vr>0){p.vx-=vr*nx;p.vy-=vr*ny}
+    }
+  } else if(p.vx<120) p.vx=120;
+  s.t+=DT;s.lava-=LAVA_SPEED*DT*(1+s.t/60);
+  if(p.y>s.lava||p.y<-100){s.over=true;s.best=Math.max(s.best||0,Math.floor(p.x/10))}
+  spawn();
+  s.anchors=s.anchors.filter(a=>a.x>p.x-W);
+}
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  const cx=s.p.x-200;
+  ctx.fillStyle='#4af';for(const a of s.anchors){ctx.beginPath();ctx.arc(a.x-cx,a.y,6,0,7);ctx.fill()}
+  if(s.rope){ctx.strokeStyle='#fff';ctx.beginPath();ctx.moveTo(s.p.x-cx,s.p.y);ctx.lineTo(s.rope.a.x-cx,s.rope.a.y);ctx.stroke()}
+  ctx.fillStyle='#fc4';ctx.beginPath();ctx.arc(s.p.x-cx,s.p.y,9,0,7);ctx.fill();
+  ctx.fillStyle='#e43';ctx.fillRect(0,s.lava,W,H);
+  ctx.fillStyle='#eee';ctx.fillText('Distance '+Math.floor(s.p.x/10)+'  Best '+(s.best||0)+'   [hold Space/click to swing]',10,18);
+  if(s.over){ctx.font='28px sans-serif';ctx.fillText('Game over - press R / tap to restart',200,H/2);ctx.font='14px sans-serif'}
+}
+let last=0,acc=0;
+function loop(t){acc+=Math.min(.05,(t-last)/1000);last=t;while(acc>=DT){step();acc-=DT}draw();requestAnimationFrame(loop)}
+const down=()=>{if(s.over){reset(Date.now()&0xffff);return}s.hold=true;attach()},up=()=>{s.hold=false;s.rope=null};
+addEventListener('keydown',e=>{if(e.code==='Space'&&!e.repeat){e.preventDefault();down()}if(e.code==='KeyR')reset(Date.now()&0xffff)});
+addEventListener('keyup',e=>{if(e.code==='Space')up()});
+cv.addEventListener('mousedown',down);addEventListener('mouseup',up);
+cv.addEventListener('touchstart',e=>{e.preventDefault();down()});cv.addEventListener('touchend',up);
+reset();
+window.__tether={get state(){return s},step:n=>{for(let i=0;i<(n||1);i++)step()},press:down,release:up,reset};
+requestAnimationFrame(loop);
+})();
+</script></body></html>
