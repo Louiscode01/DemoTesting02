@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Tether Drift</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  html,body{margin:0;height:100%;background:#05070d;color:#cde;font-family:monospace;overflow:hidden}
+  canvas{display:block;margin:0 auto;background:#080c18;max-width:100%;max-height:100vh;touch-action:none}
+</style>
+</head>
+<body>
+<canvas id="c" width="900" height="600"></canvas>
+<script>
+// ===== Tunables =====
+const W = 900, H = 600;
+const TETHER_RANGE = 220, DRAG = 0.0005, MINE_SPEED = 45, LIVES = 3, MAX_MINES = 12;
+const PROBE_SPEED = 170, BEACON_R = 11, MINE_R = 13, PROBE_R = 7, INVULN = 1.5;
+const ANCHOR_COUNT = 9;
+
+// ===== Helpers =====
+let seed = 12345;
+function rnd() { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; }
+const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+const wrap = o => { o.x = (o.x + W) % W; o.y = (o.y + H) % H; };
+
+// ===== State =====
+let S;
+function reset() {
+  seed = 12345;
+  S = {
+    probe: { x: W / 2, y: H / 2 + 150, vx: PROBE_SPEED, vy: 0 },
+    anchors: [], beacons: [], mines: [],
+    tether: null, score: 0, lives: LIVES, invuln: 0, over: false, t: 0, hold: false,
+  };
+  for (let i = 0; i < ANCHOR_COUNT; i++) {
+    const a = i / ANCHOR_COUNT * Math.PI * 2;
+    S.anchors.push({ x: W / 2 + Math.cos(a) * (140 + rnd() * 130), y: H / 2 + Math.sin(a) * (90 + rnd() * 120) });
+  }
+  spawnBeacon(); spawnBeacon();
+  for (let i = 0; i < 2; i++) spawnMine();
+}
+function spawnBeacon() {
+  S.beacons.push({ x: 40 + rnd() * (W - 80), y: 40 + rnd() * (H - 80) });
+}
+function spawnMine() {
+  const a = rnd() * Math.PI * 2;
+  let m = { x: rnd() * W, y: rnd() * H, vx: Math.cos(a) * MINE_SPEED, vy: Math.sin(a) * MINE_SPEED };
+  if (dist(m, S.probe) < 150) { m.x = (m.x + W / 2) % W; m.y = (m.y + H / 2) % H; }
+  S.mines.push(m);
+}
+
+// ===== Tether control =====
+function attach() {
+  if (S.over || S.tether) return;
+  let best = null, bd = TETHER_RANGE;
+  for (const a of S.anchors) { const d = dist(a, S.probe); if (d < bd) { bd = d; best = a; } }
+  if (best) S.tether = { a: best, len: bd };
+}
+function release() { S.tether = null; }
+
+// ===== Physics =====
+function step(dt) {
+  if (S.over) return;
+  S.t += dt;
+  const p = S.probe;
+  if (S.tether) {
+    const { a, len } = S.tether;
+    let dx = p.x - a.x, dy = p.y - a.y, d = Math.hypot(dx, dy) || 1;
+    const nx = dx / d, ny = dy / d;
+    const vr = p.vx * nx + p.vy * ny;
+    const sp = Math.hypot(p.vx, p.vy);
+    // remove radial component (rope tension), keep speed
+    let tx = p.vx - vr * nx, ty = p.vy - vr * ny;
+    const tl = Math.hypot(tx, ty) || 1;
+    p.vx = tx / tl * sp; p.vy = ty / tl * sp;
+    p.x += p.vx * dt; p.y += p.vy * dt;
+    // snap radius to rope length
+    dx = p.x - a.x; dy = p.y - a.y; d = Math.hypot(dx, dy) || 1;
+    const k = 1 + (len / d - 1) * Math.min(1, dt * 12);
+    p.x = a.x + dx * k; p.y = a.y + dy * k;
+  } else {
+    p.vx *= 1 - DRAG; p.vy *= 1 - DRAG;
+    p.x += p.vx * dt; p.y += p.vy * dt;
+  }
+  // keep a minimum cruising speed
+  const sp = Math.hypot(p.vx, p.vy);
+  if (sp < PROBE_SPEED * 0.8) { p.vx *= PROBE_SPEED * 0.8 / (sp || 1); p.vy *= PROBE_SPEED * 0.8 / (sp || 1); }
+  // wrapping drops the tether (distance to anchor would jump)
+  const wrapped = p.x < 0 || p.x >= W || p.y < 0 || p.y >= H;
+  if (wrapped) { wrap(p); S.tether = null; }
+
+  for (const m of S.mines) { m.x += m.vx * dt; m.y += m.vy * dt; wrap(m); }
+  if (S.invuln > 0) S.invuln -= dt;
+
+  for (let i = S.beacons.length - 1; i >= 0; i--) {
+    if (dist(S.beacons[i], p) < BEACON_R + PROBE_R) {
+      S.beacons.splice(i, 1); S.score++; spawnBeacon();
+      if (S.score % 5 === 0 && S.mines.length < MAX_MINES) spawnMine();
+    }
+  }
+  if (S.invuln <= 0) {
+    for (const m of S.mines) {
+      if (dist(m, p) < MINE_R + PROBE_R) {
+        S.lives--; S.invuln = INVULN;
+        if (S.lives <= 0) S.over = true;
+        break;
+      }
+    }
+  }
+}
+
+// ===== Render =====
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+function circle(x, y, r, fill, stroke) {
+  ctx.beginPath(); ctx.arc(x, y, r, 0, 7);
+  if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+  if (stroke) { ctx.strokeStyle = stroke; ctx.stroke(); }
+}
+function render() {
+  ctx.clearRect(0, 0, W, H);
+  const p = S.probe;
+  for (const a of S.anchors) {
+    const near = dist(a, p) < TETHER_RANGE;
+    circle(a.x, a.y, 6, near ? '#6cf' : '#345');
+    if (near && !S.tether) { ctx.globalAlpha = .15; circle(a.x, a.y, TETHER_RANGE, null, '#6cf'); ctx.globalAlpha = 1; }
+  }
+  for (const b of S.beacons) { circle(b.x, b.y, BEACON_R, '#fc3'); circle(b.x, b.y, BEACON_R + 5 + Math.sin(S.t * 5) * 2, null, '#fc38'); }
+  for (const m of S.mines) { circle(m.x, m.y, MINE_R, '#e44'); circle(m.x, m.y, MINE_R - 6, '#400'); }
+  if (S.tether) {
+    ctx.strokeStyle = '#8ef'; ctx.lineWidth = 2; ctx.beginPath();
+    ctx.moveTo(S.tether.a.x, S.tether.a.y); ctx.lineTo(p.x, p.y); ctx.stroke(); ctx.lineWidth = 1;
+  }
+  if (!(S.invuln > 0 && Math.floor(S.t * 12) % 2)) circle(p.x, p.y, PROBE_R, '#fff');
+  ctx.fillStyle = '#cde'; ctx.font = '16px monospace';
+  ctx.fillText('Score ' + S.score + '   Lives ' + '♥'.repeat(Math.max(0, S.lives)), 12, 24);
+  ctx.fillText('Hold SPACE / mouse / touch: tether to nearest anchor. Release to fling.', 12, H - 12);
+  if (S.over) {
+    ctx.fillStyle = '#000b'; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#fff'; ctx.font = '36px monospace'; ctx.textAlign = 'center';
+    ctx.fillText('GAME OVER — score ' + S.score, W / 2, H / 2);
+    ctx.font = '18px monospace'; ctx.fillText('Press R or tap to restart', W / 2, H / 2 + 36);
+    ctx.textAlign = 'left';
+  }
+}
+
+// ===== Input =====
+addEventListener('keydown', e => {
+  if (e.code === 'Space') { e.preventDefault(); attach(); }
+  if (e.code === 'KeyR' && S.over) reset();
+});
+addEventListener('keyup', e => { if (e.code === 'Space') release(); });
+cv.addEventListener('pointerdown', () => { if (S.over) reset(); else attach(); });
+addEventListener('pointerup', release);
+
+// ===== Loop =====
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  step(dt); render(); requestAnimationFrame(frame);
+}
+reset();
+requestAnimationFrame(frame);
+
+// Test hooks
+window.__tether = { get state() { return S; }, step, attach, release, reset };
+</script>
+</body>
+</html>
