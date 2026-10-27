@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Echo Vault</title>
+<style>
+body{margin:0;background:#0d1117;color:#c9d1d9;font-family:monospace;text-align:center}
+canvas{background:#161b22;margin-top:12px;border:1px solid #30363d}
+#hud{margin:8px;min-height:3em}
+</style></head><body>
+<div id="hud"></div><canvas id="c" width="720" height="240"></canvas>
+<div style="font-size:12px;color:#8b949e">Arrows/WASD move · Space wait · Enter commit loop (spawn ghost) · Backspace undo · R restart · N/P level</div>
+<script>
+const LEVELS = [
+  {name:"First Echo", map:["#######","#S.#.E#","#..A..#","#a.####","#######"]},
+  {name:"Two Keys", map:["############","#S..A..B..E#","##a##b######","############"]},
+  {name:"Chorus", map:["##############","#S.A..B..C..E#","##a#b##c######"]},
+];
+const DIRS={U:[0,-1],D:[0,1],L:[-1,0],R:[1,0],W:[0,0]};
+function parse(l){
+  const g={w:Math.max(...l.map.map(r=>r.length)),h:l.map.length,walls:new Set(),plates:{},doors:{},start:null,exit:null};
+  l.map.forEach((row,y)=>[...row].forEach((ch,x)=>{
+    const k=x+","+y;
+    if(ch==="#")g.walls.add(k);
+    else if(ch==="S")g.start=[x,y];
+    else if(ch==="E")g.exit=[x,y];
+    else if(ch>="a"&&ch<="c")g.plates[ch]=[x,y];
+    else if(ch>="A"&&ch<="C")g.doors[ch.toLowerCase()]=[x,y];
+  }));
+  return g;
+}
+// Pure: replay all ghosts + live clone; returns final state.
+function simulate(g,ghosts,live){
+  const actors=[...ghosts,live];
+  const pos=actors.map(()=>g.start.slice());
+  const ticks=Math.max(...actors.map(a=>a.length));
+  let won=false,open={};
+  const compute=()=>{open={};for(const id in g.plates){const [px,py]=g.plates[id];open[id]=pos.some(p=>p[0]===px&&p[1]===py);}};
+  compute();
+  for(let t=0;t<ticks&&!won;t++){
+    compute(); // doors from end-of-previous-tick positions
+    actors.forEach((a,i)=>{
+      const m=a[t]; if(!m)return;
+      const d=DIRS[m],nx=pos[i][0]+d[0],ny=pos[i][1]+d[1],k=nx+","+ny;
+      if(g.walls.has(k))return;
+      for(const id in g.doors){if(g.doors[id][0]===nx&&g.doors[id][1]===ny&&!open[id])return;}
+      pos[i]=[nx,ny];
+    });
+    const lp=pos[pos.length-1];
+    if(lp[0]===g.exit[0]&&lp[1]===g.exit[1])won=true;
+  }
+  compute();
+  return {pos,open,won};
+}
+const MAX_GHOSTS=3;
+let li=0,g,ghosts,live;
+function load(i){li=(i+LEVELS.length)%LEVELS.length;g=parse(LEVELS[li]);ghosts=[];live=[];draw();}
+function act(m){if(simulate(g,ghosts,live).won)return;live.push(m);draw();}
+function commit(){if(ghosts.length>=MAX_GHOSTS||simulate(g,ghosts,live).won)return;ghosts.push(live);live=[];draw();}
+function undo(){live.pop();draw();}
+const cv=document.getElementById("c"),cx=cv.getContext("2d"),hud=document.getElementById("hud");
+function draw(){
+  const T=Math.min(48,Math.floor(700/g.w)),s=simulate(g,ghosts,live);
+  cv.width=g.w*T+20;cv.height=g.h*T+20;cx.translate(10,10);
+  cx.clearRect(-10,-10,cv.width,cv.height);
+  for(let y=0;y<g.h;y++)for(let x=0;x<g.w;x++){
+    cx.fillStyle=g.walls.has(x+","+y)?"#30363d":"#1c2230";cx.fillRect(x*T,y*T,T-1,T-1);}
+  const cols={a:"#f2cc60",b:"#56d364",c:"#d2a8ff"};
+  for(const id in g.plates){const[p,q]=g.plates[id];cx.fillStyle=cols[id];cx.globalAlpha=.5;cx.fillRect(p*T+8,q*T+8,T-17,T-17);cx.globalAlpha=1;}
+  for(const id in g.doors){const[p,q]=g.doors[id];cx.strokeStyle=cols[id];cx.lineWidth=3;
+    if(s.open[id]){cx.setLineDash([4,4]);}cx.strokeRect(p*T+3,q*T+3,T-7,T-7);cx.setLineDash([]);}
+  cx.fillStyle="#58a6ff";cx.font=T*.6+"px monospace";cx.fillText("★",g.exit[0]*T+T*.2,g.exit[1]*T+T*.7);
+  s.pos.forEach((p,i)=>{const isLive=i===s.pos.length-1;
+    cx.fillStyle=isLive?"#ff7b72":"rgba(121,192,255,.6)";cx.beginPath();cx.arc(p[0]*T+T/2,p[1]*T+T/2,T*.33,0,7);cx.fill();});
+  cx.setTransform(1,0,0,1,0,0);
+  hud.textContent=`${LEVELS[li].name} (${li+1}/${LEVELS.length}) · ghosts ${ghosts.length}/${MAX_GHOSTS} · tick ${live.length}`+(s.won?" · SOLVED! press N":"");
+}
+const KEYS={ArrowUp:"U",w:"U",ArrowDown:"D",s:"D",ArrowLeft:"L",a:"L",ArrowRight:"R",d:"R"," ":"W"};
+addEventListener("keydown",e=>{
+  if(KEYS[e.key]){act(KEYS[e.key]);e.preventDefault();}
+  else if(e.key==="Enter")commit();
+  else if(e.key==="Backspace"){undo();e.preventDefault();}
+  else if(e.key==="r"||e.key==="R")load(li);
+  else if(e.key==="n"||e.key==="N")load(li+1);
+  else if(e.key==="p"||e.key==="P")load(li-1);
+});
+window.__echo={load,act,commit,undo,get state(){return simulate(g,ghosts,live);},get ghosts(){return ghosts.length;}};
+load(0);
+</script></body></html>
