@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Magnet Mason</title>
+<style>body{margin:0;background:#12151c;color:#dde;font:14px sans-serif;text-align:center}canvas{background:#1b2030;margin-top:8px;cursor:crosshair}#hud{padding:6px}</style></head>
+<body><div id="hud"></div><canvas id="c" width="800" height="500"></canvas>
+<div style="padding:6px">Click: attract magnet &middot; Shift/right-click: repel &middot; click magnet: remove &middot; Space: launch &middot; R: reset &middot; N/P: next/prev level</div>
+<script src="sim.js"></script><script src="levels.js"></script>
+<script>
+const cv = document.getElementById('c'), ctx = cv.getContext('2d'), hud = document.getElementById('hud');
+const G = { li: 0, magnets: [], sim: null, solved: {} };
+function level() { return LEVELS[G.li]; }
+function reset() { G.magnets = []; G.sim = null; }
+function launch() { if (!G.sim || G.sim.status !== 'running') G.sim = Sim.create(level(), G.magnets.map(m => ({ ...m }))); }
+function place(x, y, s) {
+  const near = G.magnets.findIndex(m => Math.hypot(m.x - x, m.y - y) < 14);
+  if (near >= 0) { G.magnets.splice(near, 1); return; }
+  const m = { x, y, s };
+  if (G.magnets.length < level().maxMagnets && Sim.validPlacement(level(), m)) G.magnets.push(m);
+}
+function pos(e) { const r = cv.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; }
+cv.addEventListener('mousedown', e => { if (G.sim && G.sim.status === 'running') return; G.sim = null; const [x, y] = pos(e); place(x, y, e.shiftKey || e.button === 2 ? -1 : 1); });
+cv.addEventListener('contextmenu', e => e.preventDefault());
+addEventListener('keydown', e => {
+  if (e.code === 'Space') { e.preventDefault(); launch(); }
+  else if (e.key === 'r' || e.key === 'R') reset();
+  else if (e.key === 'n' || e.key === 'N') { G.li = (G.li + 1) % LEVELS.length; reset(); }
+  else if (e.key === 'p' || e.key === 'P') { G.li = (G.li + LEVELS.length - 1) % LEVELS.length; reset(); }
+});
+function frame() {
+  if (G.sim && G.sim.status === 'running') for (let i = 0; i < 1; i++) Sim.step(G.sim);
+  if (G.sim && G.sim.status === 'won') G.solved[G.li] = true;
+  const L = level(); ctx.clearRect(0, 0, 800, 500);
+  ctx.fillStyle = '#e66'; L.hazards.forEach(r => ctx.fillRect(r.x, r.y, r.w, r.h));
+  ctx.strokeStyle = '#6e6'; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(L.goal.x, L.goal.y, Sim.GOAL_R, 0, 7); ctx.stroke();
+  G.magnets.forEach(m => { ctx.fillStyle = m.s > 0 ? '#5af' : '#fa5'; ctx.beginPath(); ctx.arc(m.x, m.y, 10, 0, 7); ctx.fill();
+    ctx.fillStyle = '#000'; ctx.fillText(m.s > 0 ? '+' : '-', m.x - 3, m.y + 4); });
+  const b = G.sim || { x: L.start.x, y: L.start.y };
+  ctx.fillStyle = '#ddd'; ctx.beginPath(); ctx.arc(b.x, b.y, Sim.BALL_R, 0, 7); ctx.fill();
+  hud.textContent = `Level ${G.li + 1}/${LEVELS.length}: ${L.name}${G.solved[G.li] ? ' ✔' : ''} — magnets ${G.magnets.length}/${L.maxMagnets}` + (G.sim ? ` — ${G.sim.status.toUpperCase()}` : '');
+  requestAnimationFrame(frame);
+}
+window.__mm = G; frame();
+</script></body></html>
