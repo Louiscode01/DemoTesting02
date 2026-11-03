@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Echo Loop</title>
+<style>
+html,body{margin:0;background:#10131a;color:#dfe6f3;font:15px/1.4 system-ui,sans-serif;text-align:center}
+canvas{display:block;margin:12px auto;background:#161b26;border-radius:8px}
+#hud{margin-top:10px;font-size:16px}#help{opacity:.7;font-size:13px;padding:0 12px 12px}
+</style></head><body>
+<div id="hud"></div><canvas id="c"></canvas>
+<div id="help">Move: arrows/WASD · Wait: Space · End loop (spawn ghost): E · Restart loop: Z · Reset level: R · Level: N / P (N after clearing)<br>
+Your path becomes a ghost each loop. Ghosts and you hold plates (a,b) to open matching doors (A,B). Reach the ✕ exit.</div>
+<script src="core.js"></script>
+<script>
+(function(){
+var C=EchoCore,cv=document.getElementById('c'),ctx=cv.getContext('2d'),hud=document.getElementById('hud');
+var TILE=56,lvl=0,G=C.newGame(0),cleared={};
+function size(){cv.width=G.L.w*TILE;cv.height=G.L.h*TILE;}
+function load(i){lvl=(i+C.LEVELS.length)%C.LEVELS.length;G=C.newGame(lvl);size();draw();}
+function pos(){return G.path[G.t];}
+function draw(){
+  var L=G.L,open=C.openDoors(L,G.ghosts,G.t,pos());
+  ctx.clearRect(0,0,cv.width,cv.height);
+  for(var y=0;y<L.h;y++)for(var x=0;x<L.w;x++){
+    ctx.fillStyle=L.wall[y][x]?'#2b3347':'#1c2230';ctx.fillRect(x*TILE,y*TILE,TILE-1,TILE-1);}
+  ctx.textAlign='center';ctx.textBaseline='middle';ctx.font='bold 22px system-ui';
+  L.plates.forEach(function(p){ctx.fillStyle=open[p.id]?'#5ee08a':'#3b7a52';ctx.beginPath();
+    ctx.arc(p.x*TILE+TILE/2,p.y*TILE+TILE/2,16,0,7);ctx.fill();ctx.fillStyle='#10131a';ctx.fillText(p.id,p.x*TILE+TILE/2,p.y*TILE+TILE/2);});
+  L.doors.forEach(function(d){var o=open[d.id];ctx.strokeStyle='#e0a05e';ctx.lineWidth=3;
+    ctx.strokeRect(d.x*TILE+6,d.y*TILE+6,TILE-13,TILE-13);
+    if(!o){ctx.fillStyle='rgba(224,160,94,.55)';ctx.fillRect(d.x*TILE+6,d.y*TILE+6,TILE-13,TILE-13);}
+    ctx.fillStyle='#e0a05e';ctx.fillText(d.id.toUpperCase(),d.x*TILE+TILE/2,d.y*TILE+TILE/2);});
+  ctx.fillStyle='#ffd75e';ctx.fillText('✕',L.exit.x*TILE+TILE/2,L.exit.y*TILE+TILE/2);
+  G.ghosts.forEach(function(g){var q=C.ghostAt(null,g,G.t);ctx.fillStyle='rgba(140,170,255,.55)';
+    ctx.beginPath();ctx.arc(q.x*TILE+TILE/2,q.y*TILE+TILE/2,16,0,7);ctx.fill();});
+  var p=pos();ctx.fillStyle='#ff6b8a';ctx.beginPath();ctx.arc(p.x*TILE+TILE/2,p.y*TILE+TILE/2,14,0,7);ctx.fill();
+  hud.textContent='Level '+(lvl+1)+'/'+C.LEVELS.length+' "'+L.name+'" · Loop '+G.loops+' · Turn '+G.t+'/'+L.T+' · Ghosts '+G.ghosts.length+(G.won?' · CLEARED! press N':'');
+}
+var K={ArrowUp:'U',w:'U',ArrowDown:'D',s:'D',ArrowLeft:'L',a:'L',ArrowRight:'R',d:'R',' ':'W'};
+addEventListener('keydown',function(e){
+  var k=e.key.length===1?e.key.toLowerCase():e.key;
+  if(K[k]){C.step(G,K[k]);if(G.won)cleared[lvl]=1;e.preventDefault();}
+  else if(k==='e')C.endLoop(G);else if(k==='z')C.restartLoop(G);else if(k==='r')C.reset(G);
+  else if(k==='n'&&(G.won||cleared[lvl]))load(lvl+1);else if(k==='p')load(lvl-1);
+  draw();});
+size();draw();
+window.__echo={get G(){return G;},get lvl(){return lvl;},load:load};
+})();
+</script></body></html>
