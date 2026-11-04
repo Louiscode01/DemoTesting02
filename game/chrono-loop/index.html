@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Chrono Loop</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+body{margin:0;background:#111;color:#ddd;font:15px system-ui,sans-serif;text-align:center}
+canvas{background:#1b1b24;margin:12px auto;display:block;max-width:96vw}
+#msg{min-height:3em;padding:0 1em}b{color:#8cf}
+</style></head><body>
+<h2 style="margin:10px">Chrono Loop</h2>
+<canvas id="c"></canvas>
+<div id="msg"></div>
+<div><b>Arrows/WASD</b> move · <b>Space</b> wait · <b>R</b> rewind (your run becomes a ghost) · <b>Z</b> restart level · <b>N</b> next level (after winning)</div>
+<script src="sim.js"></script>
+<script>
+const S = ChronoSim, T = 48, cv = document.getElementById("c"), ctx = cv.getContext("2d"), msg = document.getElementById("msg");
+let li = 0, st, note = "";
+function load(i) { li = i % S.LEVELS.length; st = S.newState(S.parse(S.LEVELS[li])); note = ""; draw(); }
+function draw() {
+  const l = st.lvl; cv.width = l.w * T; cv.height = l.h * T;
+  const open = S.doorsOpen(st);
+  for (let y = 0; y < l.h; y++) for (let x = 0; x < l.w; x++) {
+    ctx.fillStyle = l.walls[y][x] ? "#444" : "#2a2a38"; ctx.fillRect(x*T, y*T, T-1, T-1);
+  }
+  for (const k in l.plates) { const p = l.plates[k]; ctx.fillStyle = open[k] ? "#6f6" : "#385"; ctx.fillRect(p[0]*T+8, p[1]*T+8, T-16, T-16); ctx.fillStyle="#000"; ctx.fillText(k, p[0]*T+22, p[1]*T+28); }
+  for (const k in l.doors) { const d = l.doors[k]; ctx.fillStyle = open[k] ? "rgba(255,170,60,.25)" : "#e83"; ctx.fillRect(d[0]*T+2, d[1]*T+2, T-5, T-5); }
+  ctx.fillStyle = "#fd4"; ctx.fillRect(l.exit[0]*T+10, l.exit[1]*T+10, T-20, T-20);
+  for (const g of st.ghosts) { ctx.fillStyle = "rgba(120,200,255,.55)"; ctx.beginPath(); ctx.arc(g.pos[0]*T+T/2, g.pos[1]*T+T/2, T/3, 0, 7); ctx.fill(); }
+  ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(st.player[0]*T+T/2, st.player[1]*T+T/2, T/3.4, 0, 7); ctx.fill();
+  msg.innerHTML = `<b>${l.name}</b> — turn ${st.turn}/${S.MAX_TURNS}, ghosts: ${st.ghosts.length}<br>` +
+    (st.won ? "Solved! Press N for next level." : note || l.hint);
+}
+const keys = { ArrowUp:"U", w:"U", ArrowDown:"D", s:"D", ArrowLeft:"L", a:"L", ArrowRight:"R", d:"R", " ":"W" };
+addEventListener("keydown", e => {
+  const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+  if (keys[k]) { e.preventDefault(); note = S.step(st, keys[k]) ? "" : "Out of turns — press R to rewind or Z to restart."; }
+  else if (k === "r") { S.rewind(st); note = "Timeline rewound. Your past run now replays as a ghost."; }
+  else if (k === "z") load(li);
+  else if (k === "n" && st.won) load(li + 1);
+  draw();
+});
+window.__chrono = { get st() { return st; }, load };
+load(0);
+</script></body></html>
