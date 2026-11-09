@@ -1,0 +1,108 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Echo Steps</title>
+<style>
+body{margin:0;background:#12141c;color:#dfe3f0;font:15px/1.4 system-ui,sans-serif;display:flex;flex-direction:column;align-items:center}
+h1{margin:14px 0 2px;font-size:22px}#msg{height:22px;color:#ffd166}canvas{background:#1b1f2d;border-radius:8px;max-width:96vw}
+.help{max-width:560px;color:#9aa3bd;text-align:center;margin:8px}
+</style></head><body>
+<h1>Echo Steps</h1><div id="msg"></div><canvas id="c"></canvas>
+<div class="help">Arrows/WASD move · Space wait · <b>Enter</b> finish loop (you become a ghost that replays and rests on its last tile) ·
+Z restart loop · X restart level. Plates (a,b,c) open matching doors (A,B,C) while something stands on them. Reach E.</div>
+<script>
+const MAX_STEPS = 40, MAX_GHOSTS = 3, CELL = 48;
+const LEVELS = [
+ { name:"First Echo", map:[
+  "#########",
+  "#S.a.A.E#",
+  "#########"]},
+ { name:"Two Plates", map:[
+  "#############",
+  "#S.a.A.b.B.E#",
+  "#############"]},
+ { name:"Side Room", map:[
+  "##########",
+  "#S.#....E#",
+  "#.a#.....#",
+  "#..A.....#",
+  "##########"]},
+];
+const Echo = {
+  levels: LEVELS, li:0, grid:[], start:null, exit:null, player:null, rec:[], t:0,
+  ghosts:[], won:false, msg:"",
+  load(i){
+    this.li=i; this.grid=LEVELS[i].map.map(r=>r.split(""));
+    this.plates={}; this.doors={};
+    this.grid.forEach((row,y)=>row.forEach((ch,x)=>{
+      if(ch==="S")this.start={x,y}; if(ch==="E")this.exit={x,y};
+    }));
+    this.ghosts=[]; this.won=false; this.resetLoop(); this.msg=LEVELS[i].name;
+  },
+  resetLoop(){ this.player={...this.start}; this.rec=[{...this.start}]; this.t=0; this.won=false; this.msg=""; },
+  resetLevel(){ this.load(this.li); },
+  ghostPos(g,t){ return g[Math.min(t,g.length-1)]; },
+  cellAt(x,y){ return (this.grid[y]||[])[x] || "#"; },
+  occupants(t){ return [this.player, ...this.ghosts.map(g=>this.ghostPos(g,t))]; },
+  doorOpen(letter){
+    const p=letter.toLowerCase();
+    return this.occupants(this.t).some(o=>this.cellAt(o.x,o.y)===p);
+  },
+  passable(x,y){
+    const c=this.cellAt(x,y);
+    if(c==="#")return false;
+    if(c>="A"&&c<="C")return this.doorOpen(c);
+    return true;
+  },
+  act(dx,dy){
+    if(this.won)return false;
+    if(this.t>=MAX_STEPS){this.msg="Out of time — press Enter to finish the loop or Z to retry";return false;}
+    const nx=this.player.x+dx, ny=this.player.y+dy;
+    let moved=false;
+    if(dx||dy){ if(this.passable(nx,ny)){this.player={x:nx,y:ny};moved=true;} else this.msg="Blocked"; }
+    this.t++; this.rec.push({...this.player});   // wait / blocked also consume a step
+    if(this.player.x===this.exit.x&&this.player.y===this.exit.y){this.won=true;this.msg="Level complete!";}
+    return moved||(!dx&&!dy);
+  },
+  finishLoop(){
+    if(this.won||this.rec.length<2)return false;
+    this.ghosts.push(this.rec.slice()); if(this.ghosts.length>MAX_GHOSTS)this.ghosts.shift();
+    this.resetLoop(); this.msg="Ghost recorded ("+this.ghosts.length+")"; return true;
+  },
+  next(){ if(this.won&&this.li+1<LEVELS.length){this.load(this.li+1);return true;} return false; },
+};
+window.Echo = Echo;
+
+// ---- rendering / input ----
+const cv=document.getElementById("c"), ctx=cv.getContext("2d"), msgEl=document.getElementById("msg");
+function draw(){
+  const g=Echo.grid, h=g.length, w=g[0].length;
+  cv.width=w*CELL; cv.height=h*CELL;
+  const t=Echo.t;
+  g.forEach((row,y)=>row.forEach((ch,x)=>{
+    const px=x*CELL, py=y*CELL;
+    if(ch==="#"){ctx.fillStyle="#2c3350";ctx.fillRect(px,py,CELL,CELL);return;}
+    ctx.fillStyle="#222842";ctx.fillRect(px+1,py+1,CELL-2,CELL-2);
+    if(ch==="E"){ctx.fillStyle="#06d6a0";ctx.fillRect(px+10,py+10,CELL-20,CELL-20);}
+    if(ch>="a"&&ch<="c"){ctx.strokeStyle="#ef476f";ctx.lineWidth=3;ctx.strokeRect(px+8,py+8,CELL-16,CELL-16);
+      ctx.fillStyle="#ef476f";ctx.font="14px sans-serif";ctx.fillText(ch,px+20,py+28);}
+    if(ch>="A"&&ch<="C"){const open=Echo.doorOpen(ch);
+      ctx.fillStyle=open?"rgba(239,71,111,.25)":"#ef476f";ctx.fillRect(px+4,py+4,CELL-8,CELL-8);
+      ctx.fillStyle="#fff";ctx.font="14px sans-serif";ctx.fillText(ch,px+20,py+28);}
+  }));
+  Echo.ghosts.forEach(gh=>{const p=Echo.ghostPos(gh,t);
+    ctx.fillStyle="rgba(120,180,255,.55)";ctx.beginPath();ctx.arc(p.x*CELL+CELL/2,p.y*CELL+CELL/2,14,0,7);ctx.fill();});
+  const p=Echo.player;ctx.fillStyle="#ffd166";ctx.beginPath();ctx.arc(p.x*CELL+CELL/2,p.y*CELL+CELL/2,12,0,7);ctx.fill();
+  ctx.fillStyle="#9aa3bd";ctx.font="12px sans-serif";
+  ctx.fillText("Level "+(Echo.li+1)+"/"+LEVELS.length+"  step "+t+"/"+MAX_STEPS+"  ghosts "+Echo.ghosts.length,6,h*CELL-4);
+  msgEl.textContent=Echo.msg+(Echo.won&&Echo.li+1<LEVELS.length?" — press N for next level":Echo.won?" — all levels done!":"");
+}
+const KEYS={ArrowUp:[0,-1],w:[0,-1],ArrowDown:[0,1],s:[0,1],ArrowLeft:[-1,0],a:[-1,0],ArrowRight:[1,0],d:[1,0]," ":[0,0]};
+addEventListener("keydown",e=>{
+  if(KEYS[e.key]){Echo.act(...KEYS[e.key]);e.preventDefault();}
+  else if(e.key==="Enter")Echo.finishLoop();
+  else if(e.key==="z")Echo.resetLoop();
+  else if(e.key==="x")Echo.resetLevel();
+  else if(e.key==="n")Echo.next();
+  draw();
+});
+Echo.load(0);draw();
+</script></body></html>
