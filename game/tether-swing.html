@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tether Swing</title>
+<style>
+  html,body{margin:0;height:100%;background:#0b0f1a;overflow:hidden;touch-action:none}
+  canvas{display:block;margin:0 auto;background:#10172a}
+</style>
+</head>
+<body>
+<canvas id="c" width="480" height="720"></canvas>
+<script>
+"use strict";
+// ---- Tunables ----
+const W = 480, H = 720;
+const G = 900, DRAG = 0.15, RANGE = 230, DT = 1/120;
+const LAVA_START = 260, LAVA_BASE = 18, LAVA_ACCEL = 0.6, LAVA_MAX = 140;
+const SWING_ASSIST = 420; // px/s^2 along current motion while grappled
+const PLAYER_R = 9, PEG_R = 7, STAR_R = 8;
+
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+
+// ---- Seeded RNG ----
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+
+let S; // game state
+function best(){try{return +localStorage.getItem('tether_best')||0}catch(e){return 0}}
+function saveBest(v){try{localStorage.setItem('tether_best',v)}catch(e){}}
+
+function newGame(seed){
+  seed = seed ?? (Math.random()*1e9|0);
+  S = {
+    seed, rng: mulberry32(seed), state: S ? 'play' : 'title',
+    x: W/2 - 90, y: 20, vx: 260, vy: 0,
+    peg: null, ropeLen: 0, holding: false,
+    pegs: [], stars: [], genY: 80,
+    lava: LAVA_START, lavaV: LAVA_BASE, t: 0,
+    maxH: 0, starCount: 0, camY: 0, best: best(), newBest: false
+  };
+  S.pegs.push({x:W/2, y:-90});          // guaranteed first peg
+  S.genY = -90;
+  gen(-H*2);
+}
+
+function gen(untilY){ // generate pegs upward (negative y)
+  while (S.genY > untilY){
+    const h = -S.genY;
+    const gap = 80 + Math.min(70, h/60) + S.rng()*50;
+    S.genY -= gap;
+    const x = 40 + S.rng()*(W-80);
+    S.pegs.push({x, y:S.genY});
+    if (S.rng() < 0.22) S.stars.push({x: x + (S.rng()-0.5)*120, y: S.genY - 30 - S.rng()*40, got:false});
+  }
+}
+
+function grapple(){
+  if (S.state !== 'play') return;
+  S.holding = true;
+  let bestP = null, bestScore = 1e9;
+  for (const p of S.pegs){
+    const d = Math.hypot(p.x-S.x, p.y-S.y);
+    if (d > RANGE) continue;
+    const score = d + (p.y > S.y ? 80 : 0); // prefer pegs above
+    if (score < bestScore){bestScore = score; bestP = p}
+  }
+  if (bestP){S.peg = bestP; S.ropeLen = Math.max(40, Math.hypot(bestP.x-S.x, bestP.y-S.y))}
+}
+function release(){S.holding = false; S.peg = null}
+
+function step(dt){
+  if (S.state !== 'play') return;
+  S.t += dt;
+  S.vy += G*dt;
+  const dragK = Math.max(0, 1 - DRAG*dt);
+  S.vx *= dragK; S.vy *= dragK;
+  S.x += S.vx*dt; S.y += S.vy*dt;
+
+  if (S.peg){ // taut-rope constraint
+    if (S.holding){const sp=Math.hypot(S.vx,S.vy); if(sp>20){S.vx+=S.vx/sp*SWING_ASSIST*dt; S.vy+=S.vy/sp*SWING_ASSIST*dt}}
+    const dx = S.x-S.peg.x, dy = S.y-S.peg.y, d = Math.hypot(dx,dy);
+    if (d > S.ropeLen){
+      const nx = dx/d, ny = dy/d;
+      S.x = S.peg.x + nx*S.ropeLen; S.y = S.peg.y + ny*S.ropeLen;
+      const vr = S.vx*nx + S.vy*ny;
+      if (vr > 0){S.vx -= vr*nx; S.vy -= vr*ny}
+    }
+  }
+  // walls bounce
+  if (S.x < PLAYER_R){S.x = PLAYER_R; S.vx = Math.abs(S.vx)*0.6}
+  if (S.x > W-PLAYER_R){S.x = W-PLAYER_R; S.vx = -Math.abs(S.vx)*0.6}
+
+  // stars
+  for (const s of S.stars) if (!s.got && Math.hypot(s.x-S.x, s.y-S.y) < STAR_R+PLAYER_R){s.got = true; S.starCount++}
+
+  // lava
+  S.lavaV = Math.min(LAVA_MAX, LAVA_BASE + S.t*LAVA_ACCEL);
+  S.lava -= S.lavaV*dt;
+  // lava catches up faster if far below
+  if (S.y - S.lava > 520) S.lava = S.y - 520;
+  if (S.y + PLAYER_R > S.lava) return gameOver();
+
+  S.maxH = Math.max(S.maxH, -S.y);
+  gen(S.y - H*1.5);
+  // prune
+  S.pegs = S.pegs.filter(p => p.y < S.lava + 200 || p === S.peg);
+  S.stars = S.stars.filter(s => s.y < S.lava + 200);
+}
+
+function score(){return Math.floor(S.maxH/10) + S.starCount*25}
+function gameOver(){
+  S.state = 'over'; S.peg = null; S.holding = false;
+  const sc = score();
+  if (sc > S.best){S.best = sc; S.newBest = true; saveBest(sc)}
+}
+
+// ---- Render ----
+function draw(){
+  S.camY += ((S.y - H*0.6) - S.camY)*0.08;
+  ctx.clearRect(0,0,W,H);
+  ctx.save(); ctx.translate(0, -S.camY);
+  // background grid
+  ctx.strokeStyle = '#18213a'; ctx.lineWidth = 1;
+  const g0 = Math.floor(S.camY/60)*60;
+  for (let y = g0; y < g0+H+60; y += 60){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke()}
+  // pegs
+  for (const p of S.pegs){
+    if (p.y < S.camY-20 || p.y > S.camY+H+20) continue;
+    const inRange = Math.hypot(p.x-S.x,p.y-S.y) < RANGE;
+    ctx.fillStyle = p === S.peg ? '#ffd166' : inRange ? '#7dd3fc' : '#475a85';
+    ctx.beginPath(); ctx.arc(p.x,p.y,PEG_R,0,7); ctx.fill();
+  }
+  // stars
+  ctx.fillStyle = '#fde047';
+  for (const s of S.stars) if (!s.got){ctx.beginPath();ctx.arc(s.x,s.y,STAR_R,0,7);ctx.fill()}
+  // rope
+  if (S.peg){ctx.strokeStyle='#ffd166';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(S.peg.x,S.peg.y);ctx.lineTo(S.x,S.y);ctx.stroke()}
+  // player
+  ctx.fillStyle = '#f8fafc'; ctx.beginPath(); ctx.arc(S.x,S.y,PLAYER_R,0,7); ctx.fill();
+  // lava
+  const grd = ctx.createLinearGradient(0,S.lava,0,S.lava+200);
+  grd.addColorStop(0,'#ff5a3c'); grd.addColorStop(1,'#7a1010');
+  ctx.fillStyle = grd; ctx.fillRect(0,S.lava,W,H*2);
+  ctx.restore();
+
+  // HUD
+  ctx.fillStyle = '#e2e8f0'; ctx.font = '16px monospace'; ctx.textAlign = 'left';
+  ctx.fillText('Score ' + score(), 12, 24);
+  ctx.textAlign = 'right'; ctx.fillText('Best ' + S.best, W-12, 24);
+  ctx.textAlign = 'center';
+  if (S.state === 'title'){
+    ctx.font = 'bold 36px monospace'; ctx.fillText('TETHER SWING', W/2, 250);
+    ctx.font = '16px monospace';
+    ctx.fillText('Hold SPACE / mouse / touch to grapple', W/2, 300);
+    ctx.fillText('Release to fling. Climb. Escape the lava.', W/2, 325);
+    ctx.fillText('Press SPACE to start', W/2, 380);
+  } else if (S.state === 'over'){
+    ctx.font = 'bold 32px monospace'; ctx.fillText('GAME OVER', W/2, 260);
+    ctx.font = '18px monospace';
+    ctx.fillText('Score ' + score() + (S.newBest ? '  (new best!)' : ''), W/2, 300);
+    ctx.fillText('Press SPACE / click to retry', W/2, 345);
+  }
+}
+
+// ---- Input ----
+function press(){
+  if (S.state === 'title'){S.state = 'play'; S.t = 0; grapple(); return}
+  if (S.state === 'over'){newGame(); S.state = 'play'; return}
+  grapple();
+}
+addEventListener('keydown', e => {if (e.code === 'Space'){e.preventDefault(); if(!e.repeat) press()}});
+addEventListener('keyup', e => {if (e.code === 'Space') release()});
+cv.addEventListener('pointerdown', e => {e.preventDefault(); press()});
+addEventListener('pointerup', release);
+
+// ---- Loop ----
+let last = performance.now(), acc = 0;
+function frame(now){
+  acc += Math.min(0.1, (now-last)/1000); last = now;
+  while (acc >= DT){step(DT); acc -= DT}
+  draw(); requestAnimationFrame(frame);
+}
+newGame(); S.state = 'title';
+requestAnimationFrame(frame);
+
+// Test hook
+window.__tether = {
+  get state(){return S}, step, press, release, newGame, grapple, score,
+  constants:{G,RANGE,DT}
+};
+</script>
+</body>
+</html>

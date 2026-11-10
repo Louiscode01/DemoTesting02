@@ -1,9 +1,9 @@
 {
   "cycle": 2,
   "cycleStarted": "2026-11-10T00:05:00Z",
-  "lastUpdated": "2026-08-31T13:40:00Z",
-  "phase": "implementation",
-  "nextPhase": "testing",
+  "lastUpdated": "2026-11-10T00:30:00Z",
+  "phase": "done",
+  "nextPhase": "research",
   "selectedConcept": "Tether Swing",
   "checkpoints": [
     {
@@ -21,20 +21,41 @@
         "docs/design-cycle2.md"
       ],
       "notes": "Single-file canvas grapple-swing climber."
+    },
+    {
+      "phase": "implementation",
+      "completedAt": "2026-11-10T00:20:00Z",
+      "outputs": [
+        "game/tether-swing.html"
+      ],
+      "notes": "Single-file canvas grapple-swing climber, no deps."
+    },
+    {
+      "phase": "testing",
+      "completedAt": "2026-11-10T00:30:00Z",
+      "outputs": [
+        "tests/tether-swing.test.js",
+        "docs/test-results-cycle2.md"
+      ],
+      "notes": "Playwright smoke test PASS; tuning fixes applied (start velocity, no reel-in, swing assist). Human feel/balance untested."
     }
   ],
   "blockers": [],
   "followUps": [
-    "Human/manual playtest of Orbit Duel for feel/balance tuning (SHIP_THRUST, SHIP_DRAG, G, BULLET_SPEED).",
-    "Automated end-to-end test of the win condition + restart flow.",
-    "Consider a simple AI opponent or additional modes if this concept is revisited in a future cycle."
+    "Human playtest Tether Swing (SWING_ASSIST, lava speed, peg spacing); touch input test.",
+    "Orbit Duel follow-ups from cycle 1 still open (balance, win-condition test, AI opponent)."
   ],
   "budgetNotes": "Single-session run, no subagent fan-out used to conserve budget. Implementation kept to one self-contained HTML file (no build step) to keep scope tight. Cycle 1 completed fully within budget with no usage-limit warning encountered.",
-  "resumeInstructions": "Cycle 2 in progress. Research+design done. Implement game/tether-swing.html, then test (Playwright), then document in docs/test-results-cycle2.md.",
+  "resumeInstructions": "Cycle 2 complete (phase: done); do not redo. Next invocation: start Cycle 3 at research. Read docs/concepts.md and docs/concepts-cycle2.md for prior art; avoid re-proposing prior concepts verbatim.",
   "history": [
     {
       "cycle": 1,
       "selectedConcept": "Orbit Duel",
+      "status": "done"
+    },
+    {
+      "cycle": 2,
+      "selectedConcept": "Tether Swing",
       "status": "done"
     }
   ]
