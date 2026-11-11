@@ -1,45 +1,25 @@
 {
-  "cycle": 2,
-  "cycleStarted": "2026-09-16T00:00:00Z",
-  "lastUpdated": "2026-09-16T01:30:00Z",
-  "phase": "done",
-  "nextPhase": "research",
-  "selectedConcept": "Drift Maze",
+  "cycle": 3,
+  "cycleStarted": "2026-11-11T00:00:00Z",
+  "lastUpdated": "2026-11-11T00:20:00Z",
+  "phase": "research",
+  "nextPhase": "design",
+  "selectedConcept": "Drift Maze: Deep Drift",
   "checkpoints": [
     {
       "phase": "research",
-      "completedAt": "2026-09-16T00:15:00Z",
-      "outputs": ["docs/cycle2-concepts.md"],
-      "notes": "5 concepts brainstormed and scored (incl. an Orbit Duel AI-opponent evolution as a low-novelty baseline); Drift Maze (ice-slide grid puzzle) selected for full determinism / scriptable testability with no human playtester in the loop. Tidal Push was runner-up on novelty but higher edge-case risk."
-    },
-    {
-      "phase": "design",
-      "completedAt": "2026-09-16T00:30:00Z",
-      "outputs": ["docs/cycle2-design.md"],
-      "notes": "Turn-based grid architecture in a single self-contained game/drift-maze.html; pure slide() grid engine decoupled from rendering to enable BFS solvability checks + rule unit tests + an automated win-condition end-to-end test (addressing Cycle 1's biggest testing gap). 10-level hand-authored plan, escalating tile mechanics (walls -> breakable walls -> one-way gates -> teleport pads)."
-    },
-    {
-      "phase": "implementation",
-      "completedAt": "2026-09-16T01:15:00Z",
-      "outputs": ["game/drift-maze-logic.js", "game/drift-maze-levels.js", "game/drift-maze.html", "scripts/solve-levels.js", "scripts/test-slide-rules.js", "scripts/browser-test.js"],
-      "notes": "Pure grid-logic module + 10 hand-authored levels + canvas renderer/input, plus three reusable automated-test scripts (BFS solvability/mechanic-necessity checker, slide() rule unit tests, Playwright browser+win-condition e2e test)."
-    },
-    {
-      "phase": "testing",
-      "completedAt": "2026-09-16T01:30:00Z",
-      "outputs": ["docs/cycle2-test-results.md"],
-      "notes": "All automated checks pass: 10/10 levels solvable with required mechanics confirmed non-bypassable, 12/12 slide() rule unit tests, 8/8 browser assertions including a scripted win-condition end-to-end test (using the solver's own optimal path) that directly closes the Cycle 1 follow-up Orbit Duel couldn't cover. Found and fixed a teleport-pairing logic bug (searched for the same pad char instead of its pair) and a Level 10 pillar/gate column misalignment during testing; also caught and fixed a design-level bug pre-test where most levels' special tiles were bypassable via a trivial 'right,down' shortcut."
+      "completedAt": "2026-11-11T00:20:00Z",
+      "outputs": [
+        "docs/cycle3-concepts.md"
+      ],
+      "notes": "5 candidates (4 evolutions + 1 fresh, per user direction). Selected Drift Maze: Deep Drift (seeded procedural generation, exact solver, real breakable-wall mechanic, par/undo/hint). Code review found breakable walls were functionally floor, campaign pars 1-6, par never displayed."
     }
   ],
   "blockers": [],
-  "followUps": [
-    "Human playtest of the difficulty curve across the 10 levels (the solver confirms every level is completable and every mechanic required, but not whether the difficulty ramp feels right).",
-    "Slide-animation timing constants (game/drift-maze.html's Math.max(120, path.length * 55)) are a first pass, not playtested for feel.",
-    "Consider Orbit Duel: Rival AI (Cycle 2's runner-up concept) for a future cycle -- still low-risk and directly answers the original Cycle 1 follow-up.",
-    "No cross-browser testing beyond the environment's pre-installed Chromium."
-  ],
-  "budgetNotes": "Single-session run, no subagent fan-out used. Cycle 1's outputs renamed with a cycle1- prefix (docs) / moved to game/orbit-duel.html to preserve them for audit; Cycle 2's game lives at game/drift-maze.html (+ drift-maze-logic.js + drift-maze-levels.js) with reusable test scripts under scripts/. Playwright isn't a project dependency (no package.json/build step); scripts/browser-test.js resolves it from the environment's global install via NODE_PATH. Cycle 2 completed fully within budget with no usage-limit warning encountered.",
-  "resumeInstructions": "Cycle 2 is complete (phase: done) with valid outputs at every checkpoint -- do not re-execute cycle 2's research/design/implementation/testing phases. USER DIRECTION (2026-09-19): the user reviewed both Cycle 1 (Orbit Duel) and Cycle 2 (Drift Maze) and explicitly wants further depth on these existing prototypes rather than a brand-new concept next. So for Cycle 3's 'research' phase, bias the candidate list toward evolutions of the two shipped prototypes (e.g. Orbit Duel: Rival AI / more modes; Drift Maze: more levels, the difficulty-curve playtest follow-up, procedural generation now that the solvability-checking approach is proven) alongside at most one or two fresh concepts for comparison -- do not default back to 5 all-new concepts as in Cycles 1-2. Read docs/cycle1-concepts.md and docs/cycle2-concepts.md for prior art either way (avoid re-proposing rejected concepts verbatim). Also see the 'followUps' list above for specific gaps to close (human-style difficulty playtest, animation timing, cross-browser).",
+  "followUps": [],
+  "budgetNotes": "Single session, no subagent fan-out; research and design done inline rather than on separate models to conserve budget.",
+  "resumeInstructions": "Cycle 3 in progress: resume at 'design' for Drift Maze: Deep Drift. Do not redo research.",
+  "branchNote": "IMPORTANT: every scheduled run starts from the repo default branch and pushes to a new claude/* branch. Unless that branch is merged into the default branch, the next run reads stale state. As of 2026-11-11 there were 35 unmerged branches that each redid 'Cycle 2'. This cycle was built on top of claude/magical-turing-nlpcnj.",
   "history": [
     {
       "cycle": 1,
@@ -51,25 +31,33 @@
         {
           "phase": "research",
           "completedAt": "2026-08-31T12:58:00Z",
-          "outputs": ["docs/concepts.md"],
+          "outputs": [
+            "docs/concepts.md"
+          ],
           "notes": "5 concepts brainstormed and scored; Orbit Duel selected, Gravity Flip Runner as fallback."
         },
         {
           "phase": "design",
           "completedAt": "2026-08-31T13:02:00Z",
-          "outputs": ["docs/design.md"],
+          "outputs": [
+            "docs/design.md"
+          ],
           "notes": "Single-file HTML5 canvas architecture, tunable constants, testing plan defined."
         },
         {
           "phase": "implementation",
           "completedAt": "2026-08-31T13:25:00Z",
-          "outputs": ["game/index.html"],
+          "outputs": [
+            "game/index.html"
+          ],
           "notes": "Self-contained playable prototype: 2-player local gravity-duel arcade game, no build step, no external assets/deps."
         },
         {
           "phase": "testing",
           "completedAt": "2026-08-31T13:40:00Z",
-          "outputs": ["docs/test-results.md"],
+          "outputs": [
+            "docs/test-results.md"
+          ],
           "notes": "Automated Playwright/headless-Chromium smoke tests: load+interaction test and ~6s extended-session test, both PASS. Found and fixed one test-hook staleness bug (window.__orbitDuel.bullets snapshot vs live getter) during testing. Win-condition end-to-end and fun/balance tuning are NOT covered by automated tests -- flagged as follow-up."
         }
       ],
@@ -79,6 +67,60 @@
         "Consider a simple AI opponent or additional modes if this concept is revisited in a future cycle."
       ],
       "budgetNotes": "Single-session run, no subagent fan-out used to conserve budget. Implementation kept to one self-contained HTML file (no build step) to keep scope tight. Cycle 1 completed fully within budget with no usage-limit warning encountered."
+    },
+    {
+      "cycle": 2,
+      "phase": "done",
+      "selectedConcept": "Drift Maze",
+      "cycleStarted": "2026-09-16T00:00:00Z",
+      "checkpoints": [
+        {
+          "phase": "research",
+          "completedAt": "2026-09-16T00:15:00Z",
+          "outputs": [
+            "docs/cycle2-concepts.md"
+          ],
+          "notes": "5 concepts brainstormed and scored (incl. an Orbit Duel AI-opponent evolution as a low-novelty baseline); Drift Maze (ice-slide grid puzzle) selected for full determinism / scriptable testability with no human playtester in the loop. Tidal Push was runner-up on novelty but higher edge-case risk."
+        },
+        {
+          "phase": "design",
+          "completedAt": "2026-09-16T00:30:00Z",
+          "outputs": [
+            "docs/cycle2-design.md"
+          ],
+          "notes": "Turn-based grid architecture in a single self-contained game/drift-maze.html; pure slide() grid engine decoupled from rendering to enable BFS solvability checks + rule unit tests + an automated win-condition end-to-end test (addressing Cycle 1's biggest testing gap). 10-level hand-authored plan, escalating tile mechanics (walls -> breakable walls -> one-way gates -> teleport pads)."
+        },
+        {
+          "phase": "implementation",
+          "completedAt": "2026-09-16T01:15:00Z",
+          "outputs": [
+            "game/drift-maze-logic.js",
+            "game/drift-maze-levels.js",
+            "game/drift-maze.html",
+            "scripts/solve-levels.js",
+            "scripts/test-slide-rules.js",
+            "scripts/browser-test.js"
+          ],
+          "notes": "Pure grid-logic module + 10 hand-authored levels + canvas renderer/input, plus three reusable automated-test scripts (BFS solvability/mechanic-necessity checker, slide() rule unit tests, Playwright browser+win-condition e2e test)."
+        },
+        {
+          "phase": "testing",
+          "completedAt": "2026-09-16T01:30:00Z",
+          "outputs": [
+            "docs/cycle2-test-results.md"
+          ],
+          "notes": "All automated checks pass: 10/10 levels solvable with required mechanics confirmed non-bypassable, 12/12 slide() rule unit tests, 8/8 browser assertions including a scripted win-condition end-to-end test (using the solver's own optimal path) that directly closes the Cycle 1 follow-up Orbit Duel couldn't cover. Found and fixed a teleport-pairing logic bug (searched for the same pad char instead of its pair) and a Level 10 pillar/gate column misalignment during testing; also caught and fixed a design-level bug pre-test where most levels' special tiles were bypassable via a trivial 'right,down' shortcut."
+        }
+      ],
+      "followUps": [
+        "Human playtest of the difficulty curve across the 10 levels (the solver confirms every level is completable and every mechanic required, but not whether the difficulty ramp feels right).",
+        "Slide-animation timing constants (game/drift-maze.html's Math.max(120, path.length * 55)) are a first pass, not playtested for feel.",
+        "Consider Orbit Duel: Rival AI (Cycle 2's runner-up concept) for a future cycle -- still low-risk and directly answers the original Cycle 1 follow-up.",
+        "No cross-browser testing beyond the environment's pre-installed Chromium."
+      ],
+      "budgetNotes": "Single-session run, no subagent fan-out used. Cycle 1's outputs renamed with a cycle1- prefix (docs) / moved to game/orbit-duel.html to preserve them for audit; Cycle 2's game lives at game/drift-maze.html (+ drift-maze-logic.js + drift-maze-levels.js) with reusable test scripts under scripts/. Playwright isn't a project dependency (no package.json/build step); scripts/browser-test.js resolves it from the environment's global install via NODE_PATH. Cycle 2 completed fully within budget with no usage-limit warning encountered.",
+      "cycleCompleted": "2026-09-16T01:30:00Z",
+      "userDirection": "2026-09-19: user reviewed Cycles 1-2 and wants further depth on Orbit Duel / Drift Maze rather than brand-new concepts."
     }
   ]
 }
