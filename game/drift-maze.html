@@ -48,9 +48,12 @@
   <div id="hud">
     <div class="title" id="levelTitle">Drift Maze</div>
     <div id="moveCount">Moves: 0</div>
+    <div id="runInfo"></div>
     <div class="legend">
-      Arrow keys / WASD to slide (keeps moving until you hit a wall). R: reset level.
-      B = breakable wall &middot; arrows = one-way gate &middot; matching numbers = teleport pads.
+      Arrow keys / WASD: slide until something stops you. U: undo &middot; H: hint &middot; R: reset &middot;
+      M: switch Campaign / Endless &middot; N: new endless run.<br>
+      Brown = cracked wall (stops you once, then shatters) &middot; arrows = one-way gate &middot;
+      numbers = teleport pads.
     </div>
   </div>
   <canvas id="canvas" width="640" height="560"></canvas>
@@ -58,15 +61,18 @@
 
   <script src="drift-maze-logic.js"></script>
   <script src="drift-maze-levels.js"></script>
+  <script src="drift-maze-gen.js"></script>
   <script>
   (function () {
     'use strict';
 
-    var TILE = 56;
+    var MAX_TILE = 56, MAX_BOARD_W = 728;
+    var TILE = MAX_TILE;
     var canvas = document.getElementById('canvas');
     var ctx = canvas.getContext('2d');
     var levelTitleEl = document.getElementById('levelTitle');
     var moveCountEl = document.getElementById('moveCount');
+    var runInfoEl = document.getElementById('runInfo');
     var bannerEl = document.getElementById('banner');
 
     var TILE_COLORS = {
@@ -80,39 +86,90 @@
 
     var GATE_ARROW = { U: '↑', D: '↓', L: '←', R: '→' };
 
+    var params = new URLSearchParams(window.location.search);
+
     var state = {
-      levelIndex: 0,
+      mode: params.get('mode') === 'endless' ? 'endless' : 'campaign',
+      levelIndex: 0,    // campaign: index into DRIFT_MAZE_LEVELS
+      runSeed: (parseInt(params.get('seed'), 10) || Math.floor(Math.random() * 1e6)) >>> 0,
+      depth: 1,         // endless: 1-based level number within the run
+      runMoves: 0,      // endless: moves spent on completed levels this run
+      runPar: 0,        // endless: par total of completed levels this run
+      def: null,        // current level definition (campaign entry or generated)
+      par: 0,
       level: null,
       pos: null,
       moves: 0,
       solved: false,
+      history: [],      // undo stack of {pos, grid, moves}
+      hint: null,       // direction currently highlighted by the hint, if any
       animPath: null,   // array of {x,y} cells being tweened through, in canvas px
       animStart: 0,
       animDuration: 0,
       pendingDir: null, // queued input received while an animation is in flight
-      cleared: false,   // all levels finished
+      cleared: false,   // campaign: all levels finished
     };
 
-    function loadLevel(idx) {
-      var def = DRIFT_MAZE_LEVELS[idx];
+    function startLevel(def, title) {
       var level = DriftMaze.parseLevel(def);
-      state.levelIndex = idx;
+      state.def = def;
       state.level = level;
+      // Par comes from the exact solver, never from hand-entered data.
+      state.par = def.par || DriftMaze.solveLevel(level).length;
       state.pos = { x: level.start.x, y: level.start.y };
       state.moves = 0;
       state.solved = false;
+      state.history = [];
+      state.hint = null;
       state.animPath = null;
+      state.pendingDir = null;
+      TILE = Math.min(MAX_TILE, Math.floor(MAX_BOARD_W / level.width));
       canvas.width = level.width * TILE;
       canvas.height = level.height * TILE;
-      levelTitleEl.textContent = 'Level ' + (idx + 1) + ' / ' + DRIFT_MAZE_LEVELS.length + ' — ' + level.name;
+      levelTitleEl.textContent = title;
       updateHud();
       hideBanner();
       render();
     }
 
+    function loadLevel(idx) {
+      state.mode = 'campaign';
+      state.levelIndex = idx;
+      state.cleared = false;
+      var def = DRIFT_MAZE_LEVELS[idx];
+      startLevel(def, 'Campaign ' + (idx + 1) + ' / ' + DRIFT_MAZE_LEVELS.length + ' — ' + def.name);
+    }
+
+    function loadEndless(depth) {
+      state.mode = 'endless';
+      state.depth = depth;
+      state.cleared = false;
+      var def = DriftMazeGen.levelForRun(state.runSeed, depth);
+      startLevel(def, 'Endless — depth ' + depth + ' — ' + def.tierName);
+    }
+
+    function startEndlessRun(seed) {
+      state.runSeed = seed >>> 0;
+      state.runMoves = 0;
+      state.runPar = 0;
+      loadEndless(1);
+    }
+
+    function reloadCurrent() {
+      if (state.mode === 'endless') loadEndless(state.depth);
+      else loadLevel(state.levelIndex);
+    }
+
     function updateHud() {
-      var par = DRIFT_MAZE_LEVELS[state.levelIndex].par;
-      moveCountEl.textContent = 'Moves: ' + state.moves + (par ? ' (par ' + par + ')' : '');
+      moveCountEl.textContent = 'Moves: ' + state.moves + ' (par ' + state.par + ')';
+      if (state.mode === 'endless') {
+        var over = state.runMoves - state.runPar;
+        runInfoEl.textContent = 'Run seed ' + state.runSeed + ' · cleared ' + (state.depth - 1) +
+          ' · ' + (over === 0 ? 'on par' : '+' + over + ' over par') +
+          ' · replay with ?mode=endless&seed=' + state.runSeed;
+      } else {
+        runInfoEl.textContent = '';
+      }
     }
 
     function showBanner(html) {
@@ -151,6 +208,21 @@
             ctx.fillText(tile, x * TILE + TILE / 2, y * TILE + TILE / 2);
           }
         }
+      }
+
+      if (state.hint && !state.animPath) {
+        var hd = DriftMaze.DIRS[state.hint];
+        var hc = cellCenter(state.pos.x, state.pos.y);
+        ctx.strokeStyle = '#ffd866';
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.moveTo(hc.px, hc.py);
+        ctx.lineTo(hc.px + hd.dx * TILE * 0.8, hc.py + hd.dy * TILE * 0.8);
+        ctx.stroke();
+        ctx.fillStyle = '#ffd866';
+        ctx.beginPath();
+        ctx.arc(hc.px + hd.dx * TILE * 0.8, hc.py + hd.dy * TILE * 0.8, 6, 0, Math.PI * 2);
+        ctx.fill();
       }
 
       // player
@@ -197,9 +269,12 @@
         return;
       }
       var level = state.level;
+      var snapshot = { pos: state.pos, grid: DriftMaze.cloneGrid(level.grid), moves: state.moves };
       var result = DriftMaze.slide(level.grid, level.width, level.height, state.pos, dir);
-      if (!result.moved) return;
+      if (!result.acted) return;
 
+      state.history.push(snapshot);
+      state.hint = null;
       state.moves++;
       var fullPath = [{ x: state.pos.x, y: state.pos.y }].concat(result.path);
       state.pos = result.stoppedAt;
@@ -215,13 +290,48 @@
       }
     }
 
+    function undo() {
+      if (state.solved || isAnimating() || !state.history.length) return;
+      var snap = state.history.pop();
+      state.level.grid = snap.grid;
+      state.pos = snap.pos;
+      state.moves = snap.moves;
+      state.hint = null;
+      state.animPath = null;
+      updateHud();
+      render();
+    }
+
+    // Asks the exact solver for the best next move from the current position.
+    function showHint() {
+      if (state.solved || isAnimating()) return null;
+      var sol = DriftMaze.solveLevel(state.level, { grid: state.level.grid, pos: state.pos });
+      if (!sol.solvable) {
+        showBanner('No way out from here<div class="sub">U to undo, R to reset.</div>');
+        window.setTimeout(hideBanner, 1400);
+        return null;
+      }
+      state.hint = sol.moves[0];
+      render();
+      return state.hint;
+    }
+
     function onLevelSolved() {
+      var verdict = state.moves <= state.par ? 'Par!' : (state.moves - state.par) + ' over par';
+      var sub = 'Moves: ' + state.moves + ' / par ' + state.par + ' — ' + verdict;
+      if (state.mode === 'endless') {
+        state.runMoves += state.moves;
+        state.runPar += state.par;
+        showBanner('Depth ' + state.depth + ' cleared<div class="sub">' + sub + '</div>');
+        window.setTimeout(function () { loadEndless(state.depth + 1); }, 1100);
+        return;
+      }
       var isLast = state.levelIndex >= DRIFT_MAZE_LEVELS.length - 1;
       if (isLast) {
         state.cleared = true;
-        showBanner('All levels complete!<div class="sub">Press R to replay the last level.</div>');
+        showBanner('Campaign complete!<div class="sub">' + sub + '<br>Press M for Endless mode.</div>');
       } else {
-        showBanner('Level complete!<div class="sub">Moves: ' + state.moves + ' — next level in a moment&hellip;</div>');
+        showBanner('Level complete!<div class="sub">' + sub + '</div>');
         window.setTimeout(function () { loadLevel(state.levelIndex + 1); }, 1100);
       }
     }
@@ -234,8 +344,13 @@
     };
 
     window.addEventListener('keydown', function (e) {
-      if (e.code === 'KeyR') {
-        loadLevel(state.levelIndex);
+      if (e.code === 'KeyR') { reloadCurrent(); return; }
+      if (e.code === 'KeyU' || e.code === 'KeyZ') { undo(); return; }
+      if (e.code === 'KeyH') { showHint(); return; }
+      if (e.code === 'KeyN') { startEndlessRun(Math.floor(Math.random() * 1e6)); return; }
+      if (e.code === 'KeyM') {
+        if (state.mode === 'campaign') startEndlessRun(state.runSeed);
+        else loadLevel(0);
         return;
       }
       var dir = KEY_DIR[e.code];
@@ -255,7 +370,8 @@
       requestAnimationFrame(loop);
     }
 
-    loadLevel(0);
+    if (state.mode === 'endless') startEndlessRun(state.runSeed);
+    else loadLevel(0);
     requestAnimationFrame(loop);
 
     // Test hook: exposes read-only live state for automated smoke tests, mirroring
@@ -268,8 +384,20 @@
       get moves() { return state.moves; },
       get solved() { return state.solved; },
       get cleared() { return state.cleared; },
+      get mode() { return state.mode; },
+      get depth() { return state.depth; },
+      get runSeed() { return state.runSeed; },
+      get par() { return state.par; },
+      get def() { return state.def; },
+      get grid() { return state.level.grid; },
+      get hint() { return state.hint; },
+      get runMoves() { return state.runMoves; },
+      get runPar() { return state.runPar; },
       attemptMove: attemptMove,
       loadLevel: loadLevel,
+      startEndlessRun: startEndlessRun,
+      undo: undo,
+      showHint: showHint,
     };
   })();
   </script>

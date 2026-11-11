@@ -1,9 +1,9 @@
 {
   "cycle": 3,
   "cycleStarted": "2026-11-11T00:00:00Z",
-  "lastUpdated": "2026-11-11T00:20:00Z",
-  "phase": "research",
-  "nextPhase": "design",
+  "lastUpdated": "2026-11-11T01:10:00Z",
+  "phase": "done",
+  "nextPhase": "research",
   "selectedConcept": "Drift Maze: Deep Drift",
   "checkpoints": [
     {
@@ -13,12 +13,49 @@
         "docs/cycle3-concepts.md"
       ],
       "notes": "5 candidates (4 evolutions + 1 fresh, per user direction). Selected Drift Maze: Deep Drift (seeded procedural generation, exact solver, real breakable-wall mechanic, par/undo/hint). Code review found breakable walls were functionally floor, campaign pars 1-6, par never displayed."
+    },
+    {
+      "phase": "design",
+      "completedAt": "2026-11-11T00:30:00Z",
+      "outputs": [
+        "docs/cycle3-design.md"
+      ],
+      "notes": "Cracked walls stop-and-shatter; exact BFS over (position, shattered-wall mask); seeded generate-and-test generator with 4 tiers; endless mode, computed par, undo, hint."
+    },
+    {
+      "phase": "implementation",
+      "completedAt": "2026-11-11T00:55:00Z",
+      "outputs": [
+        "game/drift-maze-logic.js",
+        "game/drift-maze-gen.js",
+        "game/drift-maze.html",
+        "scripts/solve-levels.js",
+        "scripts/test-slide-rules.js",
+        "scripts/test-generator.js",
+        "scripts/browser-test.js"
+      ],
+      "notes": "Playable locally by opening game/drift-maze.html; endless mode via M or ?mode=endless&seed=N."
+    },
+    {
+      "phase": "testing",
+      "completedAt": "2026-11-11T01:10:00Z",
+      "outputs": [
+        "docs/cycle3-test-results.md",
+        "docs/cycle3-endless-screenshot.png"
+      ],
+      "notes": "All suites pass: 20/20 rule+solver checks, 10/10 campaign levels, 600 generated levels (median par by tier 6<7<9<12, all in band), 20/20 browser assertions."
     }
   ],
   "blockers": [],
-  "followUps": [],
+  "followUps": [
+    "Human playtest of the endless tiers: par length is the only difficulty measure so far.",
+    "Campaign levels 7 and 8 are 1- and 2-move levels; rework or replace them with curated generated levels.",
+    "Orbit Duel: Rival AI already exists on unmerged branches claude/magical-turing-jfrd8s and claude/magical-turing-560d4n; merge one instead of rebuilding. Note those branches moved files differently (check paths before merging).",
+    "Orbit Duel: Gauntlet (solo wave mode) is the runner-up concept, best attempted after a human playtest of Orbit Duel's feel.",
+    "No cross-browser testing beyond Chromium."
+  ],
   "budgetNotes": "Single session, no subagent fan-out; research and design done inline rather than on separate models to conserve budget.",
-  "resumeInstructions": "Cycle 3 in progress: resume at 'design' for Drift Maze: Deep Drift. Do not redo research.",
+  "resumeInstructions": "Cycle 3 (Drift Maze: Deep Drift) is complete with valid outputs at every checkpoint; do not re-execute it. Next run starts Cycle 4 at 'research'. User direction (2026-09-19) still applies: bias candidates toward deepening Orbit Duel and Drift Maze. Read docs/cycle1-concepts.md, docs/cycle2-concepts.md and docs/cycle3-concepts.md for prior art. BEFORE STARTING: if state.json on disk says cycle < 4 complete, the default branch is stale (see branchNote); look for the newest claude/* branch with a higher cycle number and build on it instead of redoing a cycle.",
   "branchNote": "IMPORTANT: every scheduled run starts from the repo default branch and pushes to a new claude/* branch. Unless that branch is merged into the default branch, the next run reads stale state. As of 2026-11-11 there were 35 unmerged branches that each redid 'Cycle 2'. This cycle was built on top of claude/magical-turing-nlpcnj.",
   "history": [
     {

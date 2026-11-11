@@ -10,12 +10,6 @@ var path = require('path');
 var DriftMaze = require(path.join(__dirname, '..', 'game', 'drift-maze-logic.js'));
 var LEVELS = require(path.join(__dirname, '..', 'game', 'drift-maze-levels.js'));
 
-var MECHANIC_TILES = {
-  breakable: function (ch) { return ch === 'B'; },
-  gate: function (ch) { return DriftMaze.GATE_DIR.hasOwnProperty(ch); },
-  teleport: function (ch) { return ch === '1' || ch === '2'; },
-};
-
 var failures = [];
 
 LEVELS.forEach(function (def, idx) {
@@ -42,25 +36,7 @@ LEVELS.forEach(function (def, idx) {
       throw new Error('no path from S to E found by BFS');
     }
 
-    // Replay the optimal solution on a fresh grid to collect every cell visited
-    // across all moves, classified by the *original* (pristine) tile grid so a
-    // breakable wall still counts even after it's cleared to floor mid-replay.
-    var replayGrid = DriftMaze.cloneGrid(level.grid);
-    var pos = level.start;
-    var visited = [];
-    result.moves.forEach(function (dir) {
-      var step = DriftMaze.slide(replayGrid, level.width, level.height, pos, dir);
-      visited = visited.concat(step.path);
-      pos = step.stoppedAt;
-    });
-
-    var usedMechanics = {};
-    visited.forEach(function (p) {
-      var pristineTile = level.grid[p.y][p.x];
-      Object.keys(MECHANIC_TILES).forEach(function (name) {
-        if (MECHANIC_TILES[name](pristineTile)) usedMechanics[name] = true;
-      });
-    });
+    var usedMechanics = DriftMaze.analyzeRoute(level, result.moves).used;
 
     var required = def.requiresMechanic || [];
     var missing = required.filter(function (m) { return !usedMechanics[m]; });

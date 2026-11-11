@@ -4,7 +4,7 @@
 //
 // Tile legend:
 //   '#' wall            '.' floor           'S' start (becomes floor)
-//   'E' exit            'B' breakable wall (clears to floor once entered)
+//   'E' exit            'B' cracked wall (first hit stops you and shatters it)
 //   'U' 'D' 'L' 'R'      one-way gate, passable only when sliding Up/Down/Left/Right
 //   '1' '2'             teleport pad pair (sliding onto one continues the slide
 //                        from the other, in the same direction)
@@ -103,11 +103,12 @@
       if (GATE_DIR[tile] && GATE_DIR[tile] !== dir) break; // one-way gate, wrong side
 
       if (tile === 'B') {
+        // Cracked wall: it absorbs the hit. The wall shatters to floor, but the
+        // slide stops in front of it, so breaking one costs a move and changes
+        // where later slides come to rest.
         grid[ny][nx] = '.';
         brokenWalls.push({ x: nx, y: ny });
-        x = nx; y = ny;
-        path.push({ x: x, y: y });
-        continue;
+        break;
       }
 
       if (tile === '1' || tile === '2') {
@@ -141,43 +142,99 @@
       hitExit: hitExit,
       brokenWalls: brokenWalls,
       teleported: teleported,
+      // A move "acts" if the player moved or a wall was shattered in place.
+      acted: path.length > 0 || brokenWalls.length > 0,
+      // True only for malformed boards where teleport pads feed each other forever.
+      overflow: steps > maxSteps,
     };
   }
 
-  // Breadth-first search over the (position) state space to confirm a level is
-  // solvable. Breakable walls make the state space technically history-dependent
-  // (grid, not just position, can change), but since breaking a wall only ever
-  // opens up the grid (never closes it), searching over position-only state with
-  // a *shared*, progressively-mutated grid across the whole BFS is sound: once a
-  // cell is floor, it stays floor, so no reachable position is ever missed by
-  // treating "grid state" as monotonically non-decreasing in reachability.
-  function solveLevel(level, maxDepth) {
-    var grid = cloneGrid(level.grid);
-    var start = level.start;
-    var visited = {};
-    var key = function (p) { return p.x + ',' + p.y; };
-    visited[key(start)] = true;
-    var queue = [{ pos: start, depth: 0, moves: [] }];
-    var head = 0;
-    var limit = maxDepth || 500;
+  // Exact breadth-first search. Shattering a cracked wall changes where later
+  // slides stop, so the search state is (position, set of shattered walls), not
+  // position alone. Returns the optimal move list plus search statistics that the
+  // generator uses to rate difficulty.
+  //
+  // opts.grid / opts.pos let callers solve from a mid-game position (hints).
+  function solveLevel(level, opts) {
+    opts = opts || {};
+    var base = opts.grid || level.grid;
+    var start = opts.pos || level.start;
+    var width = level.width, height = level.height;
+    var maxStates = opts.maxStates || 200000;
 
-    while (head < queue.length) {
-      var node = queue[head++];
-      if (node.depth > limit) continue;
-      for (var dir in DIRS) {
-        var result = slide(grid, level.width, level.height, node.pos, dir);
-        if (!result.moved) continue;
-        if (result.hitExit) {
-          return { solvable: true, moves: node.moves.concat([dir]), length: node.depth + 1 };
-        }
-        var k = key(result.stoppedAt);
-        if (!visited[k]) {
-          visited[k] = true;
-          queue.push({ pos: result.stoppedAt, depth: node.depth + 1, moves: node.moves.concat([dir]) });
-        }
+    var cracked = [];
+    for (var y = 0; y < height; y++) {
+      for (var x = 0; x < width; x++) {
+        if (base[y][x] === 'B') cracked.push({ x: x, y: y });
       }
     }
-    return { solvable: false, moves: null, length: -1 };
+    var crackedIndex = {};
+    cracked.forEach(function (c, i) { crackedIndex[c.x + ',' + c.y] = i; });
+
+    function gridFor(mask) {
+      var g = cloneGrid(base);
+      for (var i = 0; i < cracked.length; i++) {
+        if (mask & (1 << i)) g[cracked[i].y][cracked[i].x] = '.';
+      }
+      return g;
+    }
+    function key(p, mask) { return p.x + ',' + p.y + '|' + mask; }
+
+    var visited = {};
+    visited[key(start, 0)] = true;
+    var queue = [{ pos: start, mask: 0, depth: 0, parent: -1, dir: null }];
+    var head = 0;
+    var overflow = false;
+
+    while (head < queue.length && queue.length < maxStates) {
+      var node = queue[head];
+      for (var dir in DIRS) {
+        var g = gridFor(node.mask);
+        var result = slide(g, width, height, node.pos, dir);
+        if (result.overflow) { overflow = true; continue; }
+        if (!result.acted) continue;
+        if (result.hitExit) {
+          var moves = [dir];
+          for (var n = node; n.parent !== -1; n = queue[n.parent]) moves.unshift(n.dir);
+          return {
+            solvable: true, moves: moves, length: moves.length,
+            statesExplored: queue.length, overflow: overflow,
+          };
+        }
+        var mask = node.mask;
+        for (var b = 0; b < result.brokenWalls.length; b++) {
+          var w = result.brokenWalls[b];
+          mask |= 1 << crackedIndex[w.x + ',' + w.y];
+        }
+        var k = key(result.stoppedAt, mask);
+        if (!visited[k]) {
+          visited[k] = true;
+          queue.push({ pos: result.stoppedAt, mask: mask, depth: node.depth + 1, parent: head, dir: dir });
+        }
+      }
+      head++;
+    }
+    return { solvable: false, moves: null, length: -1, statesExplored: queue.length, overflow: overflow };
+  }
+
+  // Replays a move list on a fresh copy of the level and reports which special
+  // tiles the route really depends on.
+  function analyzeRoute(level, moves) {
+    var grid = cloneGrid(level.grid);
+    var pos = level.start;
+    var used = { breakable: false, gate: false, teleport: false };
+    var solved = false;
+    for (var i = 0; i < moves.length; i++) {
+      var r = slide(grid, level.width, level.height, pos, moves[i]);
+      if (r.brokenWalls.length) used.breakable = true;
+      if (r.teleported) used.teleport = true;
+      for (var j = 0; j < r.path.length; j++) {
+        if (GATE_DIR[level.grid[r.path[j].y][r.path[j].x]]) used.gate = true;
+      }
+      pos = r.stoppedAt;
+      if (r.hitExit) { solved = true; break; }
+    }
+    return { used: used, solved: solved, endPos: pos };
   }
 
   var DriftMaze = {
@@ -187,6 +244,7 @@
     cloneGrid: cloneGrid,
     slide: slide,
     solveLevel: solveLevel,
+    analyzeRoute: analyzeRoute,
   };
 
   if (typeof module !== 'undefined' && module.exports) {

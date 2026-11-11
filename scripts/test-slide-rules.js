@@ -40,13 +40,48 @@ function grid(rows) {
   check('level edge stops slide at last in-bounds cell', r.stoppedAt, { x: 4, y: 0 });
 })();
 
-// 3. Breakable wall: clears to floor and the slide continues through it.
+// 3. Cracked wall: the first hit stops the slide in front of it and shatters it;
+//    the next slide passes through the cleared cell.
 (function () {
-  var g = grid(['.B..#']);
-  var r = DriftMaze.slide(g, 5, 1, { x: 0, y: 0 }, 'right');
-  check('breakable wall clears and slide continues past it', r.stoppedAt, { x: 3, y: 0 });
-  check('breakable wall reported as broken', r.brokenWalls, [{ x: 1, y: 0 }]);
-  check('breakable wall cell becomes floor in the grid', g[0][1], '.');
+  var g = grid(['..B..#']);
+  var r = DriftMaze.slide(g, 6, 1, { x: 0, y: 0 }, 'right');
+  check('cracked wall stops the slide in front of it', r.stoppedAt, { x: 1, y: 0 });
+  check('cracked wall reported as broken', r.brokenWalls, [{ x: 2, y: 0 }]);
+  check('cracked wall cell becomes floor in the grid', g[0][2], '.');
+  var r2 = DriftMaze.slide(g, 6, 1, r.stoppedAt, 'right');
+  check('second slide passes through the shattered wall', r2.stoppedAt, { x: 4, y: 0 });
+})();
+
+// 3b. Cracked wall hit from the adjacent cell: no movement, but the move still acts.
+(function () {
+  var g = grid(['.B.#']);
+  var r = DriftMaze.slide(g, 4, 1, { x: 0, y: 0 }, 'right');
+  check('adjacent cracked wall: player does not move', r.moved, false);
+  check('adjacent cracked wall: move still counts as an action', r.acted, true);
+})();
+
+// 3c. Exact solver accounts for shattered-wall state: S must break the wall (1),
+//     then slide through to the exit (2).
+(function () {
+  var level = DriftMaze.parseLevel({ name: 't', rows: ['#######', '#S.B.E#', '#######'] });
+  var sol = DriftMaze.solveLevel(level);
+  check('solver finds the break-then-pass route', sol.moves, ['right', 'right']);
+  check('route analysis reports the cracked wall as used', DriftMaze.analyzeRoute(level, sol.moves).used.breakable, true);
+})();
+
+// 3d. Solver reports unsolvable boards instead of looping.
+(function () {
+  var level = DriftMaze.parseLevel({ name: 't', rows: ['#####', '#S#E#', '#####'] });
+  check('walled-off exit is unsolvable', DriftMaze.solveLevel(level).solvable, false);
+})();
+
+// 3e. Mutually-feeding teleport pads are flagged as overflow, not an infinite loop.
+(function () {
+  var g = grid(['2..1']); // start between the pads: 1 warps to 2, which slides back into 1
+  var r = DriftMaze.slide(g, 4, 1, { x: 1, y: 0 }, 'right');
+  check('teleport ping-pong terminates and is flagged', r.overflow, true);
+  var ok = DriftMaze.slide(grid(['.1..2.#']), 7, 1, { x: 0, y: 0 }, 'right');
+  check('ordinary teleport is not flagged as overflow', ok.overflow, false);
 })();
 
 // 4. One-way gate, wrong direction: blocks entry into the gate cell itself (like a
