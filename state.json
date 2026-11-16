@@ -1,9 +1,9 @@
 {
   "cycle": 4,
   "cycleStarted": "2026-11-16T00:05:00Z",
-  "lastUpdated": "2026-11-16T00:30:00Z",
-  "phase": "implementation",
-  "nextPhase": "implementation",
+  "lastUpdated": "2026-11-16T01:15:00Z",
+  "phase": "done",
+  "nextPhase": "research",
   "selectedConcept": "Orbit Duel: Wellwright",
   "checkpoints": [
     {
@@ -21,17 +21,39 @@
         "docs/cycle4-design.md"
       ],
       "notes": "Plan from an Opus planning subagent. Rival AI taken from unmerged branch claude/magical-turing-560d4n (game/orbit-duel.html already replaced with it); adds micro-wells, game clock, seeded headless simulate()."
+    },
+    {
+      "phase": "implementation",
+      "completedAt": "2026-11-16T01:00:00Z",
+      "outputs": [
+        "game/orbit-duel.html",
+        "scripts/orbit-duel-test.js"
+      ],
+      "notes": "Micro-wells (S / ArrowDown), AI well use and well avoidance, single game clock, seeded headless __orbitDuel.simulate(). Playable by opening game/orbit-duel.html."
+    },
+    {
+      "phase": "testing",
+      "completedAt": "2026-11-16T01:15:00Z",
+      "outputs": [
+        "docs/cycle4-test-results.md",
+        "docs/cycle4-screenshot.png"
+      ],
+      "notes": "30/30 assertions pass; Drift Maze suites still pass. 200+200 seeded AI-vs-AI matches: with wells P1 48.5%, median 56.3s, 18.9% of kills by bent bullets, 0 timeouts; without wells P1 55%, median 65.2s."
     }
   ],
   "blockers": [],
   "followUps": [
+    "Human playtest of Orbit Duel: Wellwright (well strength, self-anchoring when dropping a well while stationary, AI difficulty).",
+    "AI spends a well whenever stock is full; replace with a tactical rule (e.g. simulate whether a well turns a miss into a hit).",
+    "Possible P1 tick-order bias (55% without wells, within noise at n=200); rerun with more seeds or alternate update order.",
     "Human playtest of the endless tiers: par length is the only difficulty measure so far.",
     "Campaign levels 7 and 8 are 1- and 2-move levels; rework or replace them with curated generated levels.",
-    "Orbit Duel: Gauntlet (solo wave mode) is the runner-up concept, best attempted after a human playtest of Orbit Duel's feel.",
-    "No cross-browser testing beyond Chromium."
+    "No cross-browser testing beyond Chromium.",
+    "Drift Maze: Curated Campaign (Cycle 4 runner-up): replace weak hand-authored levels with generator picks.",
+    "Fresh-concept pool from Cycle 4 research if the user lifts the deepen-only direction: Echo Moth, Lantern Brood, Tidewright."
   ],
   "budgetNotes": "Two small subagents (Sonnet research, Opus design); implementation and testing inline.",
-  "resumeInstructions": "Cycle 4 in progress. Research and design are complete; do not redo them. Resume at the phase in nextPhase following docs/cycle4-design.md. User direction (2026-09-19) still applies: bias candidates toward deepening Orbit Duel and Drift Maze. Read docs/cycle1-concepts.md, docs/cycle2-concepts.md and docs/cycle3-concepts.md for prior art. BEFORE STARTING: if state.json on disk says a lower cycle than the newest claude/* branch, the default branch is stale (see branchNote); look for the newest claude/* branch with a higher cycle number and build on it instead of redoing a cycle.",
+  "resumeInstructions": "Cycle 4 (Orbit Duel: Wellwright) is complete with valid outputs at every checkpoint; do not re-execute it. Next run starts Cycle 5 at research. User direction (2026-09-19) still applies: bias candidates toward deepening Orbit Duel and Drift Maze. Read docs/cycle1..4-concepts.md for prior art. BEFORE STARTING: if state.json on disk shows a lower cycle than the newest claude/* branch, the default branch is stale (see branchNote); fast-forward onto the branch with the highest cycle number and build on it instead of redoing a cycle.",
   "branchNote": "IMPORTANT: every scheduled run starts from the repo default branch (claude/magical-turing-7kgu2y, still at Cycle 1) and pushes to a new claude/* branch. Unless a branch is merged into the default branch, the next run reads stale state. Cycle 4 lives on claude/magical-turing-w4mvue, built on claude/magical-turing-54jan5. The owner was notified on 2026-11-16.",
   "history": [
     {

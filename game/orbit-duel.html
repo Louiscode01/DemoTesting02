@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Orbit Duel</title>
+<title>Orbit Duel: Wellwright</title>
 <style>
   html, body {
     margin: 0;
@@ -40,9 +40,10 @@
   <canvas id="game" width="900" height="600"></canvas>
   <div id="hint">
     1: 2-player local &nbsp;|&nbsp; 2: vs Rival AI &nbsp;|&nbsp;
-    Player 1: A/D rotate, W thrust, Space fire &nbsp;|&nbsp;
-    Player 2: Left/Right rotate, Up thrust, Enter fire (2-player mode) &nbsp;|&nbsp;
-    R to restart after a win, M for menu. First to 5 kills wins. Watch the star's gravity — it bends ships and bullets alike.
+    Player 1: A/D rotate, W thrust, Space fire, S drop well &nbsp;|&nbsp;
+    Player 2: Left/Right rotate, Up thrust, Enter fire, Down drop well (2-player mode) &nbsp;|&nbsp;
+    R to restart after a win, M for menu. First to 5 kills wins. A micro-well is a short-lived gravity source:
+    it bends every bullet and ship nearby, yours included. Use it as a shield, a trap or a slingshot.
   </div>
 </div>
 <script>
@@ -63,6 +64,26 @@
   const FIRE_COOLDOWN = 0.28;     // seconds
   const WIN_SCORE = 5;
   const RESPAWN_DELAY = 1.0;      // seconds
+
+  // --- Micro-wells (deployable temporary gravity sources) ---
+  // Star pull tops out at G / GRAV_MIN_R^2 = 13.75 px/s^2, so a well has to be far
+  // heavier than the star to bend a 340 px/s bullet visibly. Invariant (tested):
+  // max well pull + max star pull < SHIP_THRUST, so a ship can always burn free.
+  const WELL_MASS = 12;
+  const WELL_MIN_R = 36;
+  const WELL_LIFE = 4.0;           // seconds
+  const WELL_ARM_DELAY = 0.35;     // seconds with no pull after deployment
+  const WELL_STOCK_MAX = 2;
+  const WELL_RECHARGE = 6.0;       // seconds per charge
+  const WELL_COOLDOWN = 1.5;       // seconds between deployments
+  const WELL_DROP_BEHIND = SHIP_RADIUS + 14;
+  const WELL_NO_SPAWN = 130;       // px exclusion around spawn points
+  const WELL_NO_STAR = 70;         // px exclusion around the star
+  const WELL_NO_EDGE = 40;         // px exclusion along arena edges (gravity does not wrap)
+  const WELL_BENT_ACCEL = 50;      // px/s^2; a bullet pulled harder than this counts as "bent"
+  const AI_WELL_DANGER = 60;       // px; AI burns away from an armed well inside this
+  const AI_SHIELD_RANGE = 220;     // px; incoming bullets considered for a shield well
+  const AI_SHIELD_MISS = 26;       // px; predicted closest approach that triggers a shield
 
   const MODE_LOCAL = 'local';
   const MODE_AI = 'ai';
@@ -143,7 +164,11 @@
       thrusting: false,
       score: 0,
       isAI: false,
-      ai: null
+      ai: null,
+      wellStock: WELL_STOCK_MAX,
+      wellCooldown: 0,
+      wellRecharge: 0,
+      wellHeld: false
     };
   }
 
@@ -164,10 +189,10 @@
 
   const players = [
     makeShip('P1', '#4ec9ff', SPAWN_P1, 0, {
-      left: 'KeyA', right: 'KeyD', thrust: 'KeyW', fire: 'Space'
+      left: 'KeyA', right: 'KeyD', thrust: 'KeyW', fire: 'Space', well: 'KeyS'
     }),
     makeShip('P2', '#ff5d73', SPAWN_P2, Math.PI, {
-      left: 'ArrowLeft', right: 'ArrowRight', thrust: 'ArrowUp', fire: 'Enter'
+      left: 'ArrowLeft', right: 'ArrowRight', thrust: 'ArrowUp', fire: 'Enter', well: 'ArrowDown'
     })
   ];
 
@@ -176,6 +201,31 @@
   let phase = 'menu';   // 'menu' | 'playing' | 'gameover'
   let mode = null;      // 'local' | 'ai'
   let winner = null;
+  let wells = [];
+  let clock = 0;            // game time in seconds; every timer uses this, never rAF time
+  let rng = Math.random;    // gameplay randomness; simulate() swaps in a seeded generator
+  let headless = false;     // true inside simulate(): skip cosmetic particles
+  let paused = false;       // test hook: stop the rAF loop from stepping
+  let wellsEnabled = true;
+  let stats = newStats();
+
+  function newStats() {
+    return {
+      kills: { bullet: 0, bulletBent: 0 },
+      starDeaths: { P1: 0, P2: 0 },
+      wellsDeployed: { P1: 0, P2: 0 },
+      shotsFired: { P1: 0, P2: 0 }
+    };
+  }
+
+  function mulberry32(a) {
+    return function () {
+      a |= 0; a = (a + 0x6D2B79F5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
 
   // ---------- Input ----------
   const keysDown = new Set();
@@ -195,20 +245,26 @@
   window.addEventListener('keyup', (e) => keysDown.delete(e.code));
 
   function startGame(m) {
-    players[0].pos = { ...SPAWN_P1 };
-    players[0].vel = { x: 0, y: 0 };
-    players[0].angle = 0;
-    players[0].alive = true;
-    players[0].score = 0;
-    players[0].isAI = false;
-
-    players[1].pos = { ...SPAWN_P2 };
-    players[1].vel = { x: 0, y: 0 };
-    players[1].angle = Math.PI;
-    players[1].alive = true;
-    players[1].score = 0;
-    players[1].isAI = (m === MODE_AI);
-    resetAIState(players[1]);
+    clock = 0;
+    for (const ship of players) {
+      const p1 = ship.id === 'P1';
+      ship.pos = { ...(p1 ? SPAWN_P1 : SPAWN_P2) };
+      ship.vel = { x: 0, y: 0 };
+      ship.angle = p1 ? 0 : Math.PI;
+      ship.alive = true;
+      ship.score = 0;
+      ship.respawnAt = 0;
+      ship.cooldown = 0;
+      ship.thrusting = false;
+      ship.wellStock = WELL_STOCK_MAX;
+      ship.wellCooldown = 0;
+      ship.wellRecharge = 0;
+      ship.wellHeld = false;
+      ship.isAI = !p1 && m === MODE_AI;
+      resetAIState(ship);
+    }
+    wells = [];
+    stats = newStats();
 
     bullets = [];
     particles = [];
@@ -218,12 +274,61 @@
   }
 
   // ---------- Physics ----------
+  function wellArmed(w) { return clock - w.born >= WELL_ARM_DELAY; }
+
+  // Summed pull of all armed micro-wells at `pos`.
+  function wellAccel(pos) {
+    let ax = 0, ay = 0;
+    for (const w of wells) {
+      if (!wellArmed(w)) continue;
+      const dx = w.pos.x - pos.x, dy = w.pos.y - pos.y;
+      const d = Math.hypot(dx, dy);
+      if (d === 0) continue;
+      const r = Math.max(d, WELL_MIN_R);
+      const mag = (G * WELL_MASS) / (r * r);
+      ax += (dx / d) * mag;
+      ay += (dy / d) * mag;
+    }
+    return { x: ax, y: ay };
+  }
+
   function gravityAccel(pos) {
     const toStar = v.sub(CENTER, pos);
     const r = Math.max(v.len(toStar), GRAV_MIN_R);
     const dir = v.norm(toStar);
     const mag = (G * STAR_MASS) / (r * r);
-    return v.scale(dir, mag);
+    const a = v.scale(dir, mag);
+    if (wells.length === 0) return a;
+    return v.add(a, wellAccel(pos));
+  }
+
+  // Returns true if the well was placed. Rejections keep the charge.
+  function deployWell(ship) {
+    if (!wellsEnabled || !ship.alive) return false;
+    if (ship.wellStock <= 0 || ship.wellCooldown > 0) return false;
+    if (wells.some(w => w.owner === ship.id)) return false;
+    const pos = {
+      x: ship.pos.x - Math.cos(ship.angle) * WELL_DROP_BEHIND,
+      y: ship.pos.y - Math.sin(ship.angle) * WELL_DROP_BEHIND
+    };
+    if (pos.x < WELL_NO_EDGE || pos.x > W - WELL_NO_EDGE ||
+        pos.y < WELL_NO_EDGE || pos.y > H - WELL_NO_EDGE) return false;
+    if (v.len(v.sub(pos, CENTER)) < WELL_NO_STAR) return false;
+    if (v.len(v.sub(pos, SPAWN_P1)) < WELL_NO_SPAWN) return false;
+    if (v.len(v.sub(pos, SPAWN_P2)) < WELL_NO_SPAWN) return false;
+    if (ship.wellStock === WELL_STOCK_MAX) ship.wellRecharge = WELL_RECHARGE;
+    ship.wellStock -= 1;
+    ship.wellCooldown = WELL_COOLDOWN;
+    wells.push({ pos, owner: ship.id, color: ship.color, born: clock });
+    stats.wellsDeployed[ship.id] += 1;
+    return true;
+  }
+
+  function destroyShip(ship) {
+    spawnExplosion(ship.pos, ship.color);
+    ship.alive = false;
+    ship.respawnAt = clock + RESPAWN_DELAY;
+    wells = wells.filter(w => w.owner !== ship.id);
   }
 
   function wrap(pos) {
@@ -234,6 +339,7 @@
   }
 
   function spawnExplosion(pos, color) {
+    if (headless) return;
     for (let i = 0; i < 18; i++) {
       const ang = Math.random() * Math.PI * 2;
       const speed = 40 + Math.random() * 120;
@@ -246,17 +352,15 @@
     }
   }
 
-  function respawnShip(ship, now) {
+  function respawnShip(ship) {
     ship.pos = { ...(ship.id === 'P1' ? SPAWN_P1 : SPAWN_P2) };
     ship.vel = { x: 0, y: 0 };
     ship.angle = ship.id === 'P1' ? 0 : Math.PI;
     ship.alive = true;
   }
 
-  function registerKill(shooterId, victim, now) {
-    spawnExplosion(victim.pos, victim.color);
-    victim.alive = false;
-    victim.respawnAt = now + RESPAWN_DELAY;
+  function registerKill(shooterId, victim) {
+    destroyShip(victim);
     const shooter = players.find(p => p.id === shooterId);
     if (shooter) {
       shooter.score += 1;
@@ -319,7 +423,8 @@
   // Runs once per tick. Never writes ship.vel/pos/bullets directly -- returns the
   // same {left, right, thrust, fire} control surface a human produces, so the AI
   // is physically incapable of doing anything a human player couldn't.
-  function aiDecide(ship, target, now) {
+  function aiDecide(ship, target) {
+    const now = clock;
     if (!ship.ai) resetAIState(ship);
     const ai = ship.ai;
     ai.ticks++;
@@ -327,13 +432,32 @@
     let desiredAngle;
     let wantThrust = false;
 
-    const distCenter = v.len(v.sub(CENTER, ship.pos));
-    const lookaheadPos = v.add(ship.pos, v.scale(ship.vel, AI_ESCAPE_LOOKAHEAD));
-    const distCenterLookahead = v.len(v.sub(CENTER, lookaheadPos));
+    // Coasting look-ahead integrated through gravity (star + wells), so being
+    // flung starward by a well is caught, not just straight-line drift.
+    let minCenter = v.len(v.sub(CENTER, ship.pos));
+    {
+      let lp = { ...ship.pos }, lv = { ...ship.vel };
+      const h = AI_ESCAPE_LOOKAHEAD / 6;
+      for (let i = 0; i < 6; i++) {
+        lv = v.add(lv, v.scale(gravityAccel(lp), h));
+        lp = v.add(lp, v.scale(lv, h));
+        minCenter = Math.min(minCenter, v.len(v.sub(CENTER, lp)));
+      }
+    }
+    let nearWell = null;
+    for (const w of wells) {
+      if (wellArmed(w) && v.len(v.sub(w.pos, ship.pos)) < AI_WELL_DANGER) nearWell = w;
+    }
+    let engaging = false;
 
-    if (distCenter < AI_DANGER_RADIUS || distCenterLookahead < AI_DANGER_RADIUS) {
+    if (minCenter < AI_DANGER_RADIUS) {
       // 1. Escape star (highest priority) -- the only hard safety behavior.
       const away = v.norm(v.sub(ship.pos, CENTER));
+      desiredAngle = Math.atan2(away.y, away.x);
+      wantThrust = true;
+    } else if (nearWell) {
+      // 1b. Too close to an armed well (anyone's): burn directly away from it.
+      const away = v.sub(ship.pos, nearWell.pos);
       desiredAngle = Math.atan2(away.y, away.x);
       wantThrust = true;
     } else {
@@ -348,11 +472,12 @@
         wantThrust = true;
       } else {
         // 3. Engage -- coast and shoot.
+        engaging = true;
         if (now >= ai.retargetAt) {
           ai.retargetAt = now + AI_RETARGET_INTERVAL;
           const solution = findAimSolution(ship, target);
           if (solution) {
-            ai.aimAngle = solution.angle + (Math.random() * 2 - 1) * AI_AIM_JITTER;
+            ai.aimAngle = solution.angle + (rng() * 2 - 1) * AI_AIM_JITTER;
             ai.hasSolution = true;
           } else {
             ai.hasSolution = false;
@@ -370,39 +495,76 @@
     const fire = ai.hasSolution &&
       Math.abs(shortestSignedAngleDelta(ship.angle, ai.aimAngle)) < AI_FIRE_ANGLE_TOL;
 
+    // Micro-well: (A) shield against a bullet on a near-collision course,
+    // (B) spend a charge when the stock is full so recharge time is not wasted.
+    let well = false;
+    if (wellsEnabled && ship.wellStock > 0 && ship.wellCooldown <= 0 &&
+        !wells.some(w => w.owner === ship.id)) {
+      for (const b of bullets) {
+        if (b.owner === ship.id) continue;
+        const rel = v.sub(b.pos, ship.pos);
+        if (v.len(rel) > AI_SHIELD_RANGE) continue;
+        const rv = v.sub(b.vel, ship.vel);
+        const t = -(rel.x * rv.x + rel.y * rv.y) / (rv.x * rv.x + rv.y * rv.y || 1);
+        if (t <= 0 || t > 1) continue;
+        if (v.len(v.add(rel, v.scale(rv, t))) < AI_SHIELD_MISS) { well = true; break; }
+      }
+      if (!well && engaging && ship.wellStock >= WELL_STOCK_MAX) well = true;
+    }
+
     if (left || right) ai.rotateTicks++;
     if (thrust) ai.thrustTicks++;
     if (fire) ai.fires++;
 
-    return { left, right, thrust, fire };
+    return { left, right, thrust, fire, well };
   }
 
   // Human ships read keysDown; AI ships get their control surface from aiDecide().
   // Either way step() consumes the same {left, right, thrust, fire} shape.
-  function readIntent(ship, now) {
+  function readIntent(ship) {
     if (ship.isAI) {
       const target = players.find(p => p.id !== ship.id);
-      return aiDecide(ship, target, now);
+      return aiDecide(ship, target);
     }
     const k = ship.keys;
     return {
       left: keysDown.has(k.left),
       right: keysDown.has(k.right),
       thrust: keysDown.has(k.thrust),
-      fire: keysDown.has(k.fire)
+      fire: keysDown.has(k.fire),
+      well: keysDown.has(k.well)
     };
   }
 
-  function step(dt, now) {
+  function step(dt) {
     if (phase !== 'playing') return;
+    clock += dt;
+    const now = clock;
+
+    wells = wells.filter(w => now - w.born < WELL_LIFE);
 
     for (const ship of players) {
+      // Well charges tick whether or not the ship is alive.
+      ship.wellCooldown -= dt;
+      if (ship.wellStock < WELL_STOCK_MAX) {
+        ship.wellRecharge -= dt;
+        if (ship.wellRecharge <= 0) {
+          ship.wellStock += 1;
+          ship.wellRecharge = WELL_RECHARGE;
+        }
+      }
+
       if (!ship.alive) {
-        if (now >= ship.respawnAt) respawnShip(ship, now);
+        if (now >= ship.respawnAt) respawnShip(ship);
         continue;
       }
 
-      const intent = readIntent(ship, now);
+      const intent = readIntent(ship);
+
+      // Edge-triggered for humans so holding the key does not spam; the AI's
+      // intent is already a one-tick decision.
+      if (intent.well && (ship.isAI || !ship.wellHeld)) deployWell(ship);
+      ship.wellHeld = !!intent.well;
 
       if (intent.left) ship.angle -= SHIP_ROT_SPEED * dt;
       if (intent.right) ship.angle += SHIP_ROT_SPEED * dt;
@@ -423,9 +585,8 @@
 
       // star collision
       if (v.len(v.sub(ship.pos, CENTER)) < STAR_RADIUS + SHIP_RADIUS) {
-        spawnExplosion(ship.pos, ship.color);
-        ship.alive = false;
-        ship.respawnAt = now + RESPAWN_DELAY;
+        destroyShip(ship);
+        stats.starDeaths[ship.id] += 1;
         continue;
       }
 
@@ -439,13 +600,16 @@
           vel: v.add(ship.vel, v.scale(dir, BULLET_SPEED)),
           ttl: BULLET_TTL,
           owner: ship.id,
-          color: ship.color
+          color: ship.color,
+          bent: false
         });
+        stats.shotsFired[ship.id] += 1;
       }
     }
 
     // bullets
     for (const b of bullets) {
+      if (!b.bent && wells.length && v.len(wellAccel(b.pos)) > WELL_BENT_ACCEL) b.bent = true;
       b.vel = v.add(b.vel, v.scale(gravityAccel(b.pos), dt));
       b.pos = v.add(b.pos, v.scale(b.vel, dt));
       wrap(b.pos);
@@ -463,7 +627,9 @@
         if (!ship.alive || ship.id === b.owner) continue;
         if (v.len(v.sub(b.pos, ship.pos)) < SHIP_RADIUS + 2) {
           b.ttl = 0;
-          registerKill(b.owner, ship, now);
+          stats.kills.bullet += 1;
+          if (b.bent) stats.kills.bulletBent += 1;
+          registerKill(b.owner, ship);
         }
       }
     }
@@ -505,6 +671,44 @@
     ctx.beginPath();
     ctx.arc(CENTER.x, CENTER.y, STAR_RADIUS, 0, Math.PI * 2);
     ctx.fill();
+  }
+
+  function drawWells() {
+    for (const w of wells) {
+      const age = clock - w.born;
+      const armed = age >= WELL_ARM_DELAY;
+      const left = Math.max(0, 1 - age / WELL_LIFE);
+      ctx.globalAlpha = armed ? 1 : 0.3;
+      const grad = ctx.createRadialGradient(w.pos.x, w.pos.y, 0, w.pos.x, w.pos.y, WELL_MIN_R * 1.6);
+      grad.addColorStop(0, 'rgba(150, 110, 255, 0.45)');
+      grad.addColorStop(1, 'rgba(150, 110, 255, 0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(w.pos.x, w.pos.y, WELL_MIN_R * 1.6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#0b0718';
+      ctx.beginPath();
+      ctx.arc(w.pos.x, w.pos.y, 7, 0, Math.PI * 2);
+      ctx.fill();
+      // Ring in the owner's colour; shrinks toward the core as the well expires.
+      ctx.strokeStyle = w.color;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(w.pos.x, w.pos.y, 8 + (WELL_MIN_R - 8) * left, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  function drawPips(ship, x, dir) {
+    for (let i = 0; i < WELL_STOCK_MAX; i++) {
+      ctx.globalAlpha = ship.wellCooldown > 0 ? 0.45 : 1;
+      ctx.beginPath();
+      ctx.arc(x + dir * i * 16, 46, 5, 0, Math.PI * 2);
+      if (i < ship.wellStock) { ctx.fillStyle = ship.color; ctx.fill(); }
+      else { ctx.strokeStyle = ship.color; ctx.lineWidth = 1.5; ctx.stroke(); }
+    }
+    ctx.globalAlpha = 1;
   }
 
   function drawShip(ship) {
@@ -566,8 +770,9 @@
     ctx.fillText('2 — vs Rival AI', W / 2, H / 2 + 20);
     ctx.font = '14px "Courier New", monospace';
     ctx.fillStyle = '#8b93a7';
-    ctx.fillText('P1: A/D rotate, W thrust, Space fire', W / 2, H / 2 + 60);
-    ctx.fillText('P2: Left/Right rotate, Up thrust, Enter fire (2-player mode)', W / 2, H / 2 + 82);
+    ctx.fillText('P1: A/D rotate, W thrust, Space fire, S drop micro-well', W / 2, H / 2 + 60);
+    ctx.fillText('P2: Left/Right rotate, Up thrust, Enter fire, Down drop micro-well', W / 2, H / 2 + 82);
+    ctx.fillText('Micro-wells bend bullets and ships for a few seconds. Yours too.', W / 2, H / 2 + 112);
     ctx.textAlign = 'left';
   }
 
@@ -581,6 +786,10 @@
     ctx.textAlign = 'right';
     ctx.fillText(p2Label + ': ' + players[1].score, W - 20, 30);
     ctx.textAlign = 'left';
+    if (phase !== 'menu') {
+      drawPips(players[0], 26, 1);
+      drawPips(players[1], W - 26, -1);
+    }
 
     if (phase === 'gameover') {
       ctx.fillStyle = 'rgba(0,0,0,0.55)';
@@ -603,6 +812,7 @@
   function render() {
     drawStarfield();
     drawStar();
+    drawWells();
     drawBullets();
     drawParticles();
     for (const ship of players) drawShip(ship);
@@ -615,7 +825,7 @@
   function frame(now) {
     const dt = Math.min((now - lastTime) / 1000, 1 / 30); // clamp to avoid spiral of death
     lastTime = now;
-    step(dt, now / 1000);
+    if (!paused) step(dt);
     render();
     requestAnimationFrame(frame);
   }
@@ -638,10 +848,75 @@
     // than flipping state flags directly.
     awardKill(id) {
       const victim = players.find(p => p.id !== id);
-      if (victim) registerKill(id, victim, performance.now() / 1000);
+      if (victim) registerKill(id, victim);
     },
     get aiDebug() { return players[1].ai; },
-    setAimJitter(n) { AI_AIM_JITTER = n; }
+    setAimJitter(n) { AI_AIM_JITTER = n; },
+    // --- Cycle 4: micro-wells + deterministic headless simulation ---
+    get wells() { return wells; },
+    get clock() { return clock; },
+    get stats() { return stats; },
+    constants: {
+      G, STAR_MASS, GRAV_MIN_R, SHIP_THRUST, WELL_MASS, WELL_MIN_R, WELL_LIFE,
+      WELL_ARM_DELAY, WELL_STOCK_MAX, WELL_RECHARGE, WELL_COOLDOWN, W, H
+    },
+    deployWell(id) { return deployWell(players.find(p => p.id === id)); },
+    setPaused(b) { paused = !!b; },
+    step,
+    gravityAt(x, y) { return gravityAccel({ x, y }); },
+    addWell(x, y, owner) {
+      const ship = players.find(p => p.id === owner) || players[0];
+      wells.push({ pos: { x, y }, owner: ship.id, color: ship.color, born: clock });
+    },
+    addBullet(x, y, vx, vy, owner) {
+      const b = { pos: { x, y }, vel: { x: vx, y: vy }, ttl: BULLET_TTL,
+                  owner: owner || 'P1', color: '#fff', bent: false };
+      bullets.push(b);
+      return b;
+    },
+    // Runs one AI-vs-AI match synchronously at a fixed timestep with seeded
+    // randomness and returns its stats. Leaves the live game at the menu.
+    simulate(seed, maxSeconds, opts) {
+      opts = opts || {};
+      maxSeconds = maxSeconds || 180;
+      const dt = opts.dt || 1 / 60;
+      const saved = { rng, jitter: AI_AIM_JITTER, wellsEnabled };
+      rng = mulberry32(seed);
+      headless = true;
+      wellsEnabled = opts.wells !== false;
+      if (opts.jitter !== undefined) AI_AIM_JITTER = opts.jitter;
+      keysDown.clear();
+      startGame(MODE_AI);
+      players[0].isAI = true;
+      // Mirror-image spawns plus fixed logic would make every seed play the same
+      // opening, so perturb the starting poses from the seed.
+      for (const p of players) {
+        p.pos.x += (rng() - 0.5) * 60;
+        p.pos.y += (rng() - 0.5) * 160;
+        p.angle += (rng() - 0.5) * 1.0;
+      }
+      while (phase === 'playing' && clock < maxSeconds) step(dt);
+      const result = {
+        seed,
+        winner: phase === 'gameover' ? winner : 'timeout',
+        duration: Math.round(clock * 1000) / 1000,
+        score: { P1: players[0].score, P2: players[1].score },
+        kills: { ...stats.kills },
+        starDeaths: { ...stats.starDeaths },
+        wellsDeployed: { ...stats.wellsDeployed },
+        shotsFired: { ...stats.shotsFired }
+      };
+      rng = saved.rng;
+      AI_AIM_JITTER = saved.jitter;
+      wellsEnabled = saved.wellsEnabled;
+      headless = false;
+      players[0].isAI = false;
+      bullets = [];
+      wells = [];
+      winner = null;
+      phase = 'menu';
+      return result;
+    }
   };
 })();
 </script>
