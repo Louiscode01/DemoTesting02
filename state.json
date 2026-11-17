@@ -1,44 +1,18 @@
 {
-  "cycle": 4,
-  "cycleStarted": "2026-11-16T00:05:00Z",
-  "lastUpdated": "2026-11-16T01:15:00Z",
-  "phase": "done",
-  "nextPhase": "research",
-  "selectedConcept": "Orbit Duel: Wellwright",
+  "cycle": 5,
+  "cycleStarted": "2026-11-17T00:05:00Z",
+  "lastUpdated": "2026-11-17T00:25:00Z",
+  "phase": "design",
+  "nextPhase": "design",
+  "selectedConcept": "Drift Maze: Cartographer",
   "checkpoints": [
     {
       "phase": "research",
-      "completedAt": "2026-11-16T00:20:00Z",
+      "completedAt": "2026-11-17T00:25:00Z",
       "outputs": [
-        "docs/cycle4-concepts.md"
+        "docs/cycle5-concepts.md"
       ],
-      "notes": "Run started on stale Cycle-1 state; fast-forwarded onto claude/magical-turing-54jan5 (Cycles 1-3). Research on a Sonnet subagent, filtered against the 2026-09-19 user direction (deepen existing prototypes). Selected Orbit Duel: Wellwright; runner-up Drift Maze: Curated Campaign."
-    },
-    {
-      "phase": "design",
-      "completedAt": "2026-11-16T00:30:00Z",
-      "outputs": [
-        "docs/cycle4-design.md"
-      ],
-      "notes": "Plan from an Opus planning subagent. Rival AI taken from unmerged branch claude/magical-turing-560d4n (game/orbit-duel.html already replaced with it); adds micro-wells, game clock, seeded headless simulate()."
-    },
-    {
-      "phase": "implementation",
-      "completedAt": "2026-11-16T01:00:00Z",
-      "outputs": [
-        "game/orbit-duel.html",
-        "scripts/orbit-duel-test.js"
-      ],
-      "notes": "Micro-wells (S / ArrowDown), AI well use and well avoidance, single game clock, seeded headless __orbitDuel.simulate(). Playable by opening game/orbit-duel.html."
-    },
-    {
-      "phase": "testing",
-      "completedAt": "2026-11-16T01:15:00Z",
-      "outputs": [
-        "docs/cycle4-test-results.md",
-        "docs/cycle4-screenshot.png"
-      ],
-      "notes": "30/30 assertions pass; Drift Maze suites still pass. 200+200 seeded AI-vs-AI matches: with wells P1 48.5%, median 56.3s, 18.9% of kills by bent bullets, 0 timeouts; without wells P1 55%, median 65.2s."
+      "notes": "Run started on stale Cycle-1 state; fast-forwarded onto claude/magical-turing-w4mvue (Cycles 1-4). Sonnet subagent supplied a fresh-concept pool; evolution candidates came from open follow-ups. Selected Drift Maze: Cartographer; runner-up Orbit Duel: Tactician."
     }
   ],
   "blockers": [],
@@ -52,8 +26,8 @@
     "Drift Maze: Curated Campaign (Cycle 4 runner-up): replace weak hand-authored levels with generator picks.",
     "Fresh-concept pool from Cycle 4 research if the user lifts the deepen-only direction: Echo Moth, Lantern Brood, Tidewright."
   ],
-  "budgetNotes": "Two small subagents (Sonnet research, Opus design); implementation and testing inline.",
-  "resumeInstructions": "Cycle 4 (Orbit Duel: Wellwright) is complete with valid outputs at every checkpoint; do not re-execute it. Next run starts Cycle 5 at research. User direction (2026-09-19) still applies: bias candidates toward deepening Orbit Duel and Drift Maze. Read docs/cycle1..4-concepts.md for prior art. BEFORE STARTING: if state.json on disk shows a lower cycle than the newest claude/* branch, the default branch is stale (see branchNote); fast-forward onto the branch with the highest cycle number and build on it instead of redoing a cycle.",
+  "budgetNotes": "One small Sonnet research subagent; everything else inline.",
+  "resumeInstructions": "Cycle 5 (Drift Maze: Cartographer) in progress: research done, resume at design. Do not redo research.",
   "branchNote": "IMPORTANT: every scheduled run starts from the repo default branch (claude/magical-turing-7kgu2y, still at Cycle 1) and pushes to a new claude/* branch. Unless a branch is merged into the default branch, the next run reads stale state. Cycle 4 lives on claude/magical-turing-w4mvue, built on claude/magical-turing-54jan5. The owner was notified on 2026-11-16.",
   "history": [
     {
@@ -213,6 +187,60 @@
       ],
       "budgetNotes": "Single session, no subagent fan-out; research and design done inline rather than on separate models to conserve budget.",
       "cycleCompleted": "2026-11-11T01:10:00Z"
+    },
+    {
+      "cycle": 4,
+      "phase": "done",
+      "selectedConcept": "Orbit Duel: Wellwright",
+      "cycleStarted": "2026-11-16T00:05:00Z",
+      "checkpoints": [
+        {
+          "phase": "research",
+          "completedAt": "2026-11-16T00:20:00Z",
+          "outputs": [
+            "docs/cycle4-concepts.md"
+          ],
+          "notes": "Run started on stale Cycle-1 state; fast-forwarded onto claude/magical-turing-54jan5 (Cycles 1-3). Research on a Sonnet subagent, filtered against the 2026-09-19 user direction (deepen existing prototypes). Selected Orbit Duel: Wellwright; runner-up Drift Maze: Curated Campaign."
+        },
+        {
+          "phase": "design",
+          "completedAt": "2026-11-16T00:30:00Z",
+          "outputs": [
+            "docs/cycle4-design.md"
+          ],
+          "notes": "Plan from an Opus planning subagent. Rival AI taken from unmerged branch claude/magical-turing-560d4n (game/orbit-duel.html already replaced with it); adds micro-wells, game clock, seeded headless simulate()."
+        },
+        {
+          "phase": "implementation",
+          "completedAt": "2026-11-16T01:00:00Z",
+          "outputs": [
+            "game/orbit-duel.html",
+            "scripts/orbit-duel-test.js"
+          ],
+          "notes": "Micro-wells (S / ArrowDown), AI well use and well avoidance, single game clock, seeded headless __orbitDuel.simulate(). Playable by opening game/orbit-duel.html."
+        },
+        {
+          "phase": "testing",
+          "completedAt": "2026-11-16T01:15:00Z",
+          "outputs": [
+            "docs/cycle4-test-results.md",
+            "docs/cycle4-screenshot.png"
+          ],
+          "notes": "30/30 assertions pass; Drift Maze suites still pass. 200+200 seeded AI-vs-AI matches: with wells P1 48.5%, median 56.3s, 18.9% of kills by bent bullets, 0 timeouts; without wells P1 55%, median 65.2s."
+        }
+      ],
+      "followUps": [
+        "Human playtest of Orbit Duel: Wellwright (well strength, self-anchoring when dropping a well while stationary, AI difficulty).",
+        "AI spends a well whenever stock is full; replace with a tactical rule (e.g. simulate whether a well turns a miss into a hit).",
+        "Possible P1 tick-order bias (55% without wells, within noise at n=200); rerun with more seeds or alternate update order.",
+        "Human playtest of the endless tiers: par length is the only difficulty measure so far.",
+        "Campaign levels 7 and 8 are 1- and 2-move levels; rework or replace them with curated generated levels.",
+        "No cross-browser testing beyond Chromium.",
+        "Drift Maze: Curated Campaign (Cycle 4 runner-up): replace weak hand-authored levels with generator picks.",
+        "Fresh-concept pool from Cycle 4 research if the user lifts the deepen-only direction: Echo Moth, Lantern Brood, Tidewright."
+      ],
+      "budgetNotes": "Two small subagents (Sonnet research, Opus design); implementation and testing inline.",
+      "cycleCompleted": "2026-11-16T01:15:00Z"
     }
   ]
 }
