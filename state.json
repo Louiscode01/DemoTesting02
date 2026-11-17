@@ -1,9 +1,9 @@
 {
   "cycle": 5,
   "cycleStarted": "2026-11-17T00:05:00Z",
-  "lastUpdated": "2026-11-17T00:25:00Z",
-  "phase": "design",
-  "nextPhase": "design",
+  "lastUpdated": "2026-11-17T00:35:00Z",
+  "phase": "implementation",
+  "nextPhase": "implementation",
   "selectedConcept": "Drift Maze: Cartographer",
   "checkpoints": [
     {
@@ -13,6 +13,14 @@
         "docs/cycle5-concepts.md"
       ],
       "notes": "Run started on stale Cycle-1 state; fast-forwarded onto claude/magical-turing-w4mvue (Cycles 1-4). Sonnet subagent supplied a fresh-concept pool; evolution candidates came from open follow-ups. Selected Drift Maze: Cartographer; runner-up Orbit Duel: Tactician."
+    },
+    {
+      "phase": "design",
+      "completedAt": "2026-11-17T00:35:00Z",
+      "outputs": [
+        "docs/cycle5-design.md"
+      ],
+      "notes": "Designed inline (no separate Opus subagent, to save budget): state-graph difficulty analysis, exact mechanic-necessity check, deterministic campaign curation, daily puzzle, stars, saved bests."
     }
   ],
   "blockers": [],
@@ -27,7 +35,7 @@
     "Fresh-concept pool from Cycle 4 research if the user lifts the deepen-only direction: Echo Moth, Lantern Brood, Tidewright."
   ],
   "budgetNotes": "One small Sonnet research subagent; everything else inline.",
-  "resumeInstructions": "Cycle 5 (Drift Maze: Cartographer) in progress: research done, resume at design. Do not redo research.",
+  "resumeInstructions": "Cycle 5 (Drift Maze: Cartographer) in progress: research and design done, resume at implementation following docs/cycle5-design.md. Do not redo earlier phases.",
   "branchNote": "IMPORTANT: every scheduled run starts from the repo default branch (claude/magical-turing-7kgu2y, still at Cycle 1) and pushes to a new claude/* branch. Unless a branch is merged into the default branch, the next run reads stale state. Cycle 4 lives on claude/magical-turing-w4mvue, built on claude/magical-turing-54jan5. The owner was notified on 2026-11-16.",
   "history": [
     {
