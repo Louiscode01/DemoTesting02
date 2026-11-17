@@ -79,6 +79,21 @@
     return score;
   }
 
+  // UTC date as a YYYYMMDD integer; the daily puzzle's seed.
+  function dateSeed(d) {
+    d = d || new Date();
+    return d.getUTCFullYear() * 10000 + (d.getUTCMonth() + 1) * 100 + d.getUTCDate();
+  }
+  var DAILY_TIER = 2;
+  function daily(dateInt) {
+    var level = generate(dateInt, DAILY_TIER);
+    var s = String(dateInt);
+    level.date = dateInt;
+    level.dateLabel = s.slice(0, 4) + '-' + s.slice(4, 6) + '-' + s.slice(6, 8);
+    level.name = 'Daily ' + level.dateLabel;
+    return level;
+  }
+
   function generate(seed, tierIndex) {
     tierIndex = Math.max(0, Math.min(TIERS.length - 1, tierIndex | 0));
     var tier = TIERS[tierIndex];
@@ -122,7 +137,8 @@
 
   var api = {
     TIERS: TIERS, ATTEMPTS: ATTEMPTS,
-    mulberry32: mulberry32, generate: generate,
+    mulberry32: mulberry32, generate: generate, buildCandidate: buildCandidate,
+    dateSeed: dateSeed, daily: daily, DAILY_TIER: DAILY_TIER,
     tierForDepth: tierForDepth, levelForRun: levelForRun,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

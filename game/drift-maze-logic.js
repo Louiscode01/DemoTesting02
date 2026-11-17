@@ -237,6 +237,143 @@
     return { used: used, solved: solved, endPos: pos };
   }
 
+  // Explores the whole state graph and rates how hard the level is to solve, not
+  // only how long its solution is. A state is (resting cell, shattered-wall mask).
+  // See docs/cycle5-design.md for the definitions. The score is a model used to
+  // order levels; it has not been checked against human players.
+  function analyzeDifficulty(level, opts) {
+    opts = opts || {};
+    var base = level.grid, width = level.width, height = level.height;
+    var maxStates = opts.maxStates || 200000;
+    var cracked = [], crackedIndex = {};
+    for (var y = 0; y < height; y++) {
+      for (var x = 0; x < width; x++) {
+        if (base[y][x] === 'B') { crackedIndex[x + ',' + y] = cracked.length; cracked.push({ x: x, y: y }); }
+      }
+    }
+    function gridFor(mask) {
+      var g = cloneGrid(base);
+      for (var i = 0; i < cracked.length; i++) {
+        if (mask & (1 << i)) g[cracked[i].y][cracked[i].x] = '.';
+      }
+      return g;
+    }
+
+    var EXIT = -1;
+    var index = {};
+    var nodes = [];   // { pos, mask, out: [target index or EXIT] }
+    function idOf(pos, mask) {
+      var k = pos.x + ',' + pos.y + '|' + mask;
+      if (index[k] === undefined) { index[k] = nodes.length; nodes.push({ pos: pos, mask: mask, out: [] }); }
+      return index[k];
+    }
+    idOf(level.start, 0);
+    for (var head = 0; head < nodes.length && nodes.length < maxStates; head++) {
+      var node = nodes[head];
+      for (var dir in DIRS) {
+        var r = slide(gridFor(node.mask), width, height, node.pos, dir);
+        if (r.overflow || !r.acted) continue;
+        if (r.hitExit) { node.out.push(EXIT); continue; }
+        var mask = node.mask;
+        for (var b = 0; b < r.brokenWalls.length; b++) {
+          mask |= 1 << crackedIndex[r.brokenWalls[b].x + ',' + r.brokenWalls[b].y];
+        }
+        node.out.push(idOf(r.stoppedAt, mask));
+      }
+    }
+
+    // Backward BFS from the exit over reversed edges: exact distance to the exit.
+    var n = nodes.length, i, j;
+    var dist = new Array(n), rev = new Array(n), queue = [];
+    for (i = 0; i < n; i++) { dist[i] = Infinity; rev[i] = []; }
+    for (i = 0; i < n; i++) {
+      for (j = 0; j < nodes[i].out.length; j++) {
+        var t = nodes[i].out[j];
+        if (t === EXIT) { if (dist[i] === Infinity) { dist[i] = 1; queue.push(i); } }
+        else rev[t].push(i);
+      }
+    }
+    for (var qh = 0; qh < queue.length; qh++) {
+      var cur = queue[qh];
+      for (j = 0; j < rev[cur].length; j++) {
+        var p = rev[cur][j];
+        if (dist[p] === Infinity) { dist[p] = dist[cur] + 1; queue.push(p); }
+      }
+    }
+
+    var solvable = dist[0] !== Infinity;
+    var traps = 0;
+    for (i = 0; i < n; i++) if (dist[i] === Infinity) traps++;
+
+    // Shortest-route count, by increasing distance to the exit.
+    var routes = new Array(n);
+    var order = queue.slice(); // already sorted by dist
+    for (i = 0; i < order.length; i++) {
+      var s = order[i], count = 0;
+      for (j = 0; j < nodes[s].out.length; j++) {
+        var o = nodes[s].out[j];
+        if (o === EXIT) { if (dist[s] === 1) count += 1; }
+        else if (dist[o] === dist[s] - 1) count += routes[o];
+      }
+      routes[s] = count;
+    }
+
+    // Choice bits along one optimal route.
+    var bits = 0;
+    if (solvable) {
+      var at = 0;
+      while (at !== EXIT) {
+        var outs = nodes[at].out, good = 0, next = EXIT;
+        for (j = 0; j < outs.length; j++) {
+          var isGood = outs[j] === EXIT ? dist[at] === 1 : dist[outs[j]] === dist[at] - 1;
+          if (isGood) { if (!good) next = outs[j]; good++; }
+        }
+        bits += Math.log(outs.length / good) / Math.LN2;
+        at = next;
+      }
+    }
+
+    var trapRatio = n ? traps / n : 0;
+    var par = solvable ? dist[0] : -1;
+    return {
+      solvable: solvable,
+      par: par,
+      states: n,
+      trapStates: traps,
+      trapRatio: trapRatio,
+      optimalRoutes: solvable ? routes[0] : 0,
+      bits: bits,
+      score: solvable ? Math.round((bits + par / 2 + 3 * trapRatio) * 10) / 10 : 0,
+      overflow: n >= maxStates,
+    };
+  }
+
+  // Exact test of whether a tile type can be ignored: neutralise it (cracked walls
+  // and gates become solid walls, pads become floor) and re-solve. The mechanic is
+  // necessary when the altered level is unsolvable or needs more moves.
+  var MECHANIC_TILES = {
+    breakable: { tiles: 'B', becomes: '#' },
+    gate: { tiles: 'UDLR', becomes: '#' },
+    teleport: { tiles: '12', becomes: '.' },
+  };
+  function mechanicNecessity(level) {
+    var par = solveLevel(level).length;
+    var out = {};
+    Object.keys(MECHANIC_TILES).forEach(function (name) {
+      var spec = MECHANIC_TILES[name], present = false;
+      var grid = level.grid.map(function (row) {
+        return row.map(function (ch) {
+          if (spec.tiles.indexOf(ch) !== -1) { present = true; return spec.becomes; }
+          return ch;
+        });
+      });
+      if (!present || par < 0) { out[name] = false; return; }
+      var alt = solveLevel(level, { grid: grid });
+      out[name] = !alt.solvable || alt.length > par;
+    });
+    return out;
+  }
+
   var DriftMaze = {
     DIRS: DIRS,
     GATE_DIR: GATE_DIR,
@@ -245,6 +382,8 @@
     slide: slide,
     solveLevel: solveLevel,
     analyzeRoute: analyzeRoute,
+    analyzeDifficulty: analyzeDifficulty,
+    mechanicNecessity: mechanicNecessity,
   };
 
   if (typeof module !== 'undefined' && module.exports) {

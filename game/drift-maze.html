@@ -49,9 +49,12 @@
     <div class="title" id="levelTitle">Drift Maze</div>
     <div id="moveCount">Moves: 0</div>
     <div id="runInfo"></div>
+    <div id="bestInfo"></div>
     <div class="legend">
       Arrow keys / WASD: slide until something stops you. U: undo &middot; H: hint &middot; R: reset &middot;
-      M: switch Campaign / Endless &middot; N: new endless run.<br>
+      M: switch Campaign / Endless &middot; N: new endless run &middot; T: today's daily puzzle &middot;
+      [ ]: previous / next campaign level.<br>
+      Stars: 3 at par, 2 within two moves, 1 otherwise; a solve that used a hint earns 1.<br>
       Brown = cracked wall (stops you once, then shatters) &middot; arrows = one-way gate &middot;
       numbers = teleport pads.
     </div>
@@ -74,6 +77,48 @@
     var moveCountEl = document.getElementById('moveCount');
     var runInfoEl = document.getElementById('runInfo');
     var bannerEl = document.getElementById('banner');
+    var bestInfoEl = document.getElementById('bestInfo');
+
+    // Saved progress. Every access is guarded: the game must work when storage is
+    // blocked (private windows, some file:// setups).
+    var STORE_KEY = 'driftMaze.v1';
+    function loadStore() {
+      var empty = { campaign: {}, daily: {}, unlocked: 0, endlessBest: 0 };
+      try {
+        var raw = JSON.parse(window.localStorage.getItem(STORE_KEY) || 'null');
+        if (!raw || typeof raw !== 'object') return empty;
+        return {
+          campaign: raw.campaign && typeof raw.campaign === 'object' ? raw.campaign : {},
+          daily: raw.daily && typeof raw.daily === 'object' ? raw.daily : {},
+          unlocked: raw.unlocked | 0,
+          endlessBest: raw.endlessBest | 0,
+        };
+      } catch (e) { return empty; }
+    }
+    function saveStore() {
+      try { window.localStorage.setItem(STORE_KEY, JSON.stringify(store)); } catch (e) { /* play on unsaved */ }
+    }
+    var store = loadStore();
+
+    function starsFor(moves, par, hinted) {
+      if (hinted) return 1;
+      if (moves <= par) return 3;
+      if (moves <= par + 2) return 2;
+      return 1;
+    }
+    function starText(n) { return '★★★'.slice(0, n) + '☆☆☆'.slice(0, 3 - n); }
+    // Keeps the better of two results: more stars first, then fewer moves.
+    function recordBest(table, key, moves, stars) {
+      var old = table[key];
+      if (!old || stars > old.stars || (stars === old.stars && moves < old.moves)) {
+        table[key] = { moves: moves, stars: stars };
+      }
+    }
+    function totalStars() {
+      var n = 0;
+      DRIFT_MAZE_LEVELS.forEach(function (l) { if (store.campaign[l.name]) n += store.campaign[l.name].stars; });
+      return n;
+    }
 
     var TILE_COLORS = {
       '#': '#2c3040',
@@ -89,7 +134,11 @@
     var params = new URLSearchParams(window.location.search);
 
     var state = {
-      mode: params.get('mode') === 'endless' ? 'endless' : 'campaign',
+      mode: params.get('mode') === 'endless' ? 'endless' : (params.get('mode') === 'daily' ? 'daily' : 'campaign'),
+      dailyDate: 0,     // daily: YYYYMMDD (UTC)
+      hinted: false,    // a hint was used on this attempt
+      score: 0,         // estimated difficulty of the current level
+      lastStars: 0,     // stars awarded for the most recent solve
       levelIndex: 0,    // campaign: index into DRIFT_MAZE_LEVELS
       runSeed: (parseInt(params.get('seed'), 10) || Math.floor(Math.random() * 1e6)) >>> 0,
       depth: 1,         // endless: 1-based level number within the run
@@ -115,7 +164,10 @@
       state.def = def;
       state.level = level;
       // Par comes from the exact solver, never from hand-entered data.
-      state.par = def.par || DriftMaze.solveLevel(level).length;
+      var diff = DriftMaze.analyzeDifficulty(level);
+      state.par = diff.par;
+      state.score = diff.score;
+      state.hinted = false;
       state.pos = { x: level.start.x, y: level.start.y };
       state.moves = 0;
       state.solved = false;
@@ -155,9 +207,27 @@
       loadEndless(1);
     }
 
+    function loadDaily(dateInt) {
+      state.mode = 'daily';
+      state.cleared = false;
+      state.dailyDate = dateInt || DriftMazeGen.dateSeed();
+      var def = DriftMazeGen.daily(state.dailyDate);
+      startLevel(def, def.name + ' — ' + def.tierName);
+    }
+
     function reloadCurrent() {
       if (state.mode === 'endless') loadEndless(state.depth);
+      else if (state.mode === 'daily') loadDaily(state.dailyDate);
       else loadLevel(state.levelIndex);
+    }
+
+    // Campaign level select, limited to levels already reached.
+    function stepLevel(delta) {
+      if (state.mode !== 'campaign' || isAnimating()) return false;
+      var idx = state.levelIndex + delta;
+      if (idx < 0 || idx > Math.min(store.unlocked, DRIFT_MAZE_LEVELS.length - 1)) return false;
+      loadLevel(idx);
+      return true;
     }
 
     function updateHud() {
@@ -167,9 +237,19 @@
         runInfoEl.textContent = 'Run seed ' + state.runSeed + ' · cleared ' + (state.depth - 1) +
           ' · ' + (over === 0 ? 'on par' : '+' + over + ' over par') +
           ' · replay with ?mode=endless&seed=' + state.runSeed;
+      } else if (state.mode === 'daily') {
+        runInfoEl.textContent = 'Same puzzle for everyone today (UTC) · share ?mode=daily&date=' + state.dailyDate;
       } else {
         runInfoEl.textContent = '';
       }
+      var best = state.mode === 'campaign' ? store.campaign[state.def.name]
+        : state.mode === 'daily' ? store.daily[state.dailyDate] : null;
+      var parts = ['Estimated difficulty ' + state.score.toFixed(1)];
+      if (state.mode === 'endless') parts.push('deepest cleared ' + store.endlessBest);
+      else parts.push(best ? 'best ' + best.moves + ' moves ' + starText(best.stars) : 'not solved yet');
+      if (state.mode === 'campaign') parts.push('campaign stars ' + totalStars() + ' / ' + DRIFT_MAZE_LEVELS.length * 3);
+      if (state.hinted) parts.push('hint used');
+      bestInfoEl.textContent = parts.join(' · ');
     }
 
     function showBanner(html) {
@@ -312,14 +392,29 @@
         return null;
       }
       state.hint = sol.moves[0];
+      state.hinted = true;
+      updateHud();
       render();
       return state.hint;
     }
 
     function onLevelSolved() {
       var verdict = state.moves <= state.par ? 'Par!' : (state.moves - state.par) + ' over par';
-      var sub = 'Moves: ' + state.moves + ' / par ' + state.par + ' — ' + verdict;
+      var stars = starsFor(state.moves, state.par, state.hinted);
+      state.lastStars = stars;
+      var sub = starText(stars) + '<br>Moves: ' + state.moves + ' / par ' + state.par + ' — ' + verdict +
+        (state.hinted ? ' (hint used)' : '');
+      if (state.mode === 'daily') {
+        recordBest(store.daily, state.dailyDate, state.moves, stars);
+        saveStore();
+        state.cleared = true;
+        updateHud();
+        showBanner('Daily solved<div class="sub">' + sub + '<br>R to retry · M for the campaign</div>');
+        return;
+      }
       if (state.mode === 'endless') {
+        store.endlessBest = Math.max(store.endlessBest, state.depth);
+        saveStore();
         state.runMoves += state.moves;
         state.runPar += state.par;
         showBanner('Depth ' + state.depth + ' cleared<div class="sub">' + sub + '</div>');
@@ -327,9 +422,14 @@
         return;
       }
       var isLast = state.levelIndex >= DRIFT_MAZE_LEVELS.length - 1;
+      recordBest(store.campaign, state.def.name, state.moves, stars);
+      store.unlocked = Math.max(store.unlocked, Math.min(state.levelIndex + 1, DRIFT_MAZE_LEVELS.length - 1));
+      saveStore();
       if (isLast) {
         state.cleared = true;
-        showBanner('Campaign complete!<div class="sub">' + sub + '<br>Press M for Endless mode.</div>');
+        updateHud();
+        showBanner('Campaign complete!<div class="sub">' + sub + '<br>Stars ' + totalStars() + ' / ' +
+          DRIFT_MAZE_LEVELS.length * 3 + '<br>Press M for Endless mode or T for the daily puzzle.</div>');
       } else {
         showBanner('Level complete!<div class="sub">' + sub + '</div>');
         window.setTimeout(function () { loadLevel(state.levelIndex + 1); }, 1100);
@@ -348,6 +448,9 @@
       if (e.code === 'KeyU' || e.code === 'KeyZ') { undo(); return; }
       if (e.code === 'KeyH') { showHint(); return; }
       if (e.code === 'KeyN') { startEndlessRun(Math.floor(Math.random() * 1e6)); return; }
+      if (e.code === 'KeyT') { loadDaily(); return; }
+      if (e.code === 'BracketLeft') { stepLevel(-1); return; }
+      if (e.code === 'BracketRight') { stepLevel(1); return; }
       if (e.code === 'KeyM') {
         if (state.mode === 'campaign') startEndlessRun(state.runSeed);
         else loadLevel(0);
@@ -371,7 +474,8 @@
     }
 
     if (state.mode === 'endless') startEndlessRun(state.runSeed);
-    else loadLevel(0);
+    else if (state.mode === 'daily') loadDaily(parseInt(params.get('date'), 10) || 0);
+    else loadLevel(Math.min(store.unlocked, DRIFT_MAZE_LEVELS.length - 1));
     requestAnimationFrame(loop);
 
     // Test hook: exposes read-only live state for automated smoke tests, mirroring
@@ -393,6 +497,14 @@
       get hint() { return state.hint; },
       get runMoves() { return state.runMoves; },
       get runPar() { return state.runPar; },
+      get score() { return state.score; },
+      get hinted() { return state.hinted; },
+      get lastStars() { return state.lastStars; },
+      get dailyDate() { return state.dailyDate; },
+      get store() { return JSON.parse(JSON.stringify(store)); },
+      starsFor: starsFor,
+      loadDaily: loadDaily,
+      stepLevel: stepLevel,
       attemptMove: attemptMove,
       loadLevel: loadLevel,
       startEndlessRun: startEndlessRun,

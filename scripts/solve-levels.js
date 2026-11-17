@@ -11,6 +11,7 @@ var DriftMaze = require(path.join(__dirname, '..', 'game', 'drift-maze-logic.js'
 var LEVELS = require(path.join(__dirname, '..', 'game', 'drift-maze-levels.js'));
 
 var failures = [];
+var scores = [];
 
 LEVELS.forEach(function (def, idx) {
   var label = 'Level ' + (idx + 1) + ' "' + def.name + '"';
@@ -36,7 +37,15 @@ LEVELS.forEach(function (def, idx) {
       throw new Error('no path from S to E found by BFS');
     }
 
-    var usedMechanics = DriftMaze.analyzeRoute(level, result.moves).used;
+    // Cycle 5: exact necessity (neutralise the tile type and re-solve) instead of
+    // checking a single optimal route.
+    var usedMechanics = DriftMaze.mechanicNecessity(level);
+    var diff = DriftMaze.analyzeDifficulty(level);
+    if (diff.par !== result.length) throw new Error('difficulty analysis par ' + diff.par + ' != solver par ' + result.length);
+    if (def.par !== result.length) throw new Error('stored par ' + def.par + ' != solver par ' + result.length);
+    if (def.score !== diff.score) throw new Error('stored score ' + def.score + ' != computed ' + diff.score);
+    if (result.length < 3) throw new Error('par ' + result.length + ' is below the campaign minimum of 3');
+    scores.push(diff.score);
 
     var required = def.requiresMechanic || [];
     var missing = required.filter(function (m) { return !usedMechanics[m]; });
@@ -49,7 +58,8 @@ LEVELS.forEach(function (def, idx) {
 
     console.log(
       label + ': SOLVABLE, par = ' + result.length + ' moves [' + result.moves.join(', ') + ']' +
-      (required.length ? ', uses: ' + required.join('+') : '')
+      ', score ' + diff.score + ' (bits ' + diff.bits.toFixed(1) + ', traps ' + diff.trapStates + '/' + diff.states +
+      ', shortest routes ' + diff.optimalRoutes + ')' + (required.length ? ', needs: ' + required.join('+') : '')
     );
   } catch (err) {
     failures.push(label + ': ' + err.message);
@@ -57,10 +67,31 @@ LEVELS.forEach(function (def, idx) {
   }
 });
 
+// Curve checks: the last three levels strictly rise and top everything before them,
+// and no non-intro level is easier than the first tutorial.
+if (scores.length === LEVELS.length) {
+  var n = scores.length;
+  var earlierMax = Math.max.apply(null, scores.slice(0, n - 3));
+  if (!(scores[n - 3] > earlierMax && scores[n - 2] > scores[n - 3] && scores[n - 1] > scores[n - 2])) {
+    failures.push('difficulty curve: final three levels do not strictly rise above the rest (' + scores.join(', ') + ')');
+  } else {
+    console.log('Curve: final three levels rise above all earlier ones (' + scores.join(', ') + ')');
+  }
+}
+
+// The level file must be exactly what the curation script produces.
+var curation = require(path.join(__dirname, 'curate-campaign.js'));
+var fresh = curation.curate();
+var stored = require('fs').readFileSync(path.join(__dirname, '..', 'game', 'drift-maze-levels.js'), 'utf8');
+if (curation.render(fresh) !== stored) failures.push('game/drift-maze-levels.js differs from a fresh curation run');
+else console.log('Level file matches a fresh, deterministic curation run (' + fresh.length + ' levels).');
+var belowFloor = fresh.filter(function (l) { return l.metFloor === false; });
+if (belowFloor.length) failures.push('curation fell below its difficulty floor for: ' + belowFloor.map(function (l) { return l.name; }).join(', '));
+
 if (failures.length > 0) {
   console.log('\n' + failures.length + ' level(s) failed validation.');
   process.exit(1);
 } else {
-  console.log('\nAll ' + LEVELS.length + ' levels validated, solvable, and required mechanics confirmed non-bypassable.');
+  console.log('\nAll ' + LEVELS.length + ' levels validated, solvable, and required mechanics confirmed necessary.');
   process.exit(0);
 }
