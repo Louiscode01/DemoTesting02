@@ -1,9 +1,9 @@
 {
   "cycle": 5,
   "cycleStarted": "2026-11-17T00:05:00Z",
-  "lastUpdated": "2026-11-17T00:35:00Z",
-  "phase": "implementation",
-  "nextPhase": "implementation",
+  "lastUpdated": "2026-11-17T01:20:00Z",
+  "phase": "done",
+  "nextPhase": "research",
   "selectedConcept": "Drift Maze: Cartographer",
   "checkpoints": [
     {
@@ -21,22 +21,47 @@
         "docs/cycle5-design.md"
       ],
       "notes": "Designed inline (no separate Opus subagent, to save budget): state-graph difficulty analysis, exact mechanic-necessity check, deterministic campaign curation, daily puzzle, stars, saved bests."
+    },
+    {
+      "phase": "implementation",
+      "completedAt": "2026-11-17T01:05:00Z",
+      "outputs": [
+        "game/drift-maze-logic.js",
+        "game/drift-maze-gen.js",
+        "game/drift-maze-levels.js",
+        "game/drift-maze.html",
+        "scripts/curate-campaign.js",
+        "scripts/test-difficulty.js",
+        "scripts/solve-levels.js",
+        "scripts/browser-test.js"
+      ],
+      "notes": "analyzeDifficulty (full state graph: bits, traps, shortest-route count, score) and exact mechanicNecessity; deterministic curation script that regenerates the 12-level campaign; daily puzzle (T or ?mode=daily&date=YYYYMMDD), stars, saved bests, level select. Playable by opening game/drift-maze.html."
+    },
+    {
+      "phase": "testing",
+      "completedAt": "2026-11-17T01:20:00Z",
+      "outputs": [
+        "docs/cycle5-test-results.md",
+        "docs/cycle5-daily-screenshot.png",
+        "docs/cycle5-campaign-end-screenshot.png"
+      ],
+      "notes": "All suites pass: difficulty 14/14, campaign 12/12 with curve and curation-reproducibility checks, slide rules 20/20, generator 600 levels, browser 39/39 including a full 12-level playthrough at par (36/36 stars), Orbit Duel regression passes."
     }
   ],
   "blockers": [],
   "followUps": [
+    "Human playtest of Drift Maze: does the difficulty score match how hard levels feel? Are trap states fun or annoying (the curated campaign currently has none)?",
+    "Campaign levels 3, 4 and 6 score within 0.3 of each other; widen the gaps if a playtest finds that stretch flat.",
+    "Daily puzzle has no first-attempt lock; results can be improved by retrying.",
     "Human playtest of Orbit Duel: Wellwright (well strength, self-anchoring when dropping a well while stationary, AI difficulty).",
-    "AI spends a well whenever stock is full; replace with a tactical rule (e.g. simulate whether a well turns a miss into a hit).",
-    "Possible P1 tick-order bias (55% without wells, within noise at n=200); rerun with more seeds or alternate update order.",
-    "Human playtest of the endless tiers: par length is the only difficulty measure so far.",
-    "Campaign levels 7 and 8 are 1- and 2-move levels; rework or replace them with curated generated levels.",
+    "Orbit Duel: Tactician (Cycle 5 runner-up): tactical AI well use, difficulty levels, larger seeded sample for the possible P1 tick-order bias.",
+    "Orbit Duel: Gauntlet (solo wave mode), best after a human playtest of Orbit Duel.",
     "No cross-browser testing beyond Chromium.",
-    "Drift Maze: Curated Campaign (Cycle 4 runner-up): replace weak hand-authored levels with generator picks.",
-    "Fresh-concept pool from Cycle 4 research if the user lifts the deepen-only direction: Echo Moth, Lantern Brood, Tidewright."
+    "Fresh-concept pool if the user lifts the deepen-only direction: Tidewright, Parity Dash, Silt & Spore, Echo Moth, Lantern Brood."
   ],
-  "budgetNotes": "One small Sonnet research subagent; everything else inline.",
-  "resumeInstructions": "Cycle 5 (Drift Maze: Cartographer) in progress: research and design done, resume at implementation following docs/cycle5-design.md. Do not redo earlier phases.",
-  "branchNote": "IMPORTANT: every scheduled run starts from the repo default branch (claude/magical-turing-7kgu2y, still at Cycle 1) and pushes to a new claude/* branch. Unless a branch is merged into the default branch, the next run reads stale state. Cycle 4 lives on claude/magical-turing-w4mvue, built on claude/magical-turing-54jan5. The owner was notified on 2026-11-16.",
+  "budgetNotes": "One small Sonnet research subagent (its fresh concepts were shelved once the stale state was noticed); design, implementation and testing inline. No usage-limit warning.",
+  "resumeInstructions": "Cycle 5 (Drift Maze: Cartographer) is complete with valid outputs at every checkpoint; do not re-execute it. Next run starts Cycle 6 at research. User direction (2026-09-19) still applies: bias candidates toward deepening Orbit Duel and Drift Maze; Orbit Duel is next in the alternation. Read docs/cycle1..5-concepts.md for prior art. BEFORE STARTING: if state.json on disk shows a lower cycle than the newest claude/* branch, the default branch is stale (see branchNote); fast-forward onto the branch with the highest cycle number and build on it instead of redoing a cycle.",
+  "branchNote": "IMPORTANT: every scheduled run starts from the repo default branch (claude/magical-turing-7kgu2y, still at Cycle 1). Unless a branch is merged into the default branch, the next run reads stale state. Cycles 1-5 live on claude/magical-turing-19lrw3 (fast-forwarded from claude/magical-turing-w4mvue). The owner was notified on 2026-11-16 and again on 2026-11-17.",
   "history": [
     {
       "cycle": 1,

@@ -141,7 +141,148 @@ async function main() {
   var run = await page.evaluate(function () { return { m: window.__driftMaze.runMoves, p: window.__driftMaze.runPar }; });
   assert(run.m === totalPar && run.p === totalPar, 'run totals track moves and par (moves ' + run.m + ', par ' + run.p + ', expected ' + totalPar + ')');
   assert(consoleErrors.length === 0, 'no console/page errors across the whole session (errors: ' + JSON.stringify(consoleErrors) + ')');
-  await page.screenshot({ path: path.join(__dirname, '..', 'docs', 'cycle3-endless-screenshot.png') });
+
+  // ===== Cycle 5: stars, saved bests, level select, daily puzzle =====
+  async function hook(fn) { return page.evaluate(fn); }
+  async function play(moves, wait) {
+    for (var k = 0; k < moves.length; k++) {
+      await page.keyboard.press(KEY_FOR_DIR[moves[k]]);
+      await page.waitForTimeout(wait || 300);
+    }
+  }
+
+  // --- Test 8: star rule ---
+  var starRule = await hook(function () {
+    var h = window.__driftMaze;
+    return [h.starsFor(5, 5, false), h.starsFor(7, 5, false), h.starsFor(8, 5, false), h.starsFor(5, 5, true)];
+  });
+  assert(JSON.stringify(starRule) === '[3,2,1,1]', 'stars: par 3, par+2 2, beyond 1, hinted 1 (' + JSON.stringify(starRule) + ')');
+
+  // --- Test 9: earlier solves were saved, and survive a reload ---
+  var saved = await hook(function () { return window.__driftMaze.store; });
+  assert(saved.campaign['First Slide'] && saved.campaign['First Slide'].moves === 3 && saved.campaign['First Slide'].stars === 3,
+    'level 1 par solve stored as 3 moves, 3 stars (' + JSON.stringify(saved.campaign) + ')');
+  assert(saved.unlocked === 1 && saved.endlessBest === DEPTHS, 'unlocked level 2 and endless best depth ' + DEPTHS + ' stored (' + saved.unlocked + ', ' + saved.endlessBest + ')');
+
+  await page.goto(url);
+  await page.waitForTimeout(300);
+  var resumed = await hook(function () {
+    return { idx: window.__driftMaze.levelIndex, hud: document.getElementById('bestInfo').textContent, score: window.__driftMaze.score };
+  });
+  assert(resumed.idx === 1, 'reload resumes at the furthest unlocked campaign level (index ' + resumed.idx + ')');
+  assert(/Estimated difficulty \d+\.\d/.test(resumed.hud) && /campaign stars 3 \/ 36/.test(resumed.hud),
+    'HUD shows estimated difficulty and star total (' + resumed.hud + ')');
+  assert(resumed.score === LEVELS[1].score, 'in-game difficulty equals the curated score (' + resumed.score + ')');
+
+  // --- Test 10: level select is bounded by progress ---
+  await page.keyboard.press('BracketRight');
+  await page.waitForTimeout(100);
+  var afterNext = await hook(function () { return window.__driftMaze.levelIndex; });
+  await page.keyboard.press('BracketLeft');
+  await page.waitForTimeout(100);
+  var afterPrev = await hook(function () { return window.__driftMaze.levelIndex; });
+  await page.keyboard.press('BracketLeft');
+  await page.waitForTimeout(100);
+  var afterPrev2 = await hook(function () { return window.__driftMaze.levelIndex; });
+  assert(afterNext === 1 && afterPrev === 0 && afterPrev2 === 0,
+    'level select: ] blocked past unlocked, [ goes back, [ stops at the first level (' + [afterNext, afterPrev, afterPrev2].join(', ') + ')');
+
+  // --- Test 11: a hinted solve earns 1 star and does not overwrite a better record ---
+  await page.keyboard.press('KeyH');
+  await page.waitForTimeout(100);
+  await play(solution.moves);
+  await page.waitForTimeout(500);
+  var hinted = await hook(function () {
+    var h = window.__driftMaze;
+    return { stars: h.lastStars, best: h.store.campaign['First Slide'] };
+  });
+  assert(hinted.stars === 1 && hinted.best.stars === 3, 'hinted solve gives 1 star, saved best stays at 3 (' + JSON.stringify(hinted) + ')');
+  await page.waitForTimeout(1300);
+
+  // --- Test 12: a slow solve earns fewer stars (one wasted move on a level with slack) ---
+  await hook(function () { window.__driftMaze.loadLevel(1); });
+  await page.waitForTimeout(100);
+  var sol2 = DriftMaze.solveLevel(DriftMaze.parseLevel(LEVELS[1]));
+  await play(sol2.moves.slice(0, 1));
+  await play(['left', 'right']);       // out and back along the top corridor
+  await play(sol2.moves.slice(1));
+  await page.waitForTimeout(500);
+  var slow = await hook(function () { return { stars: window.__driftMaze.lastStars, moves: window.__driftMaze.moves, par: window.__driftMaze.par }; });
+  assert(slow.moves === slow.par + 2 && slow.stars === 2, 'two moves over par earns 2 stars (' + JSON.stringify(slow) + ')');
+
+  // --- Test 13: daily puzzle — date-seeded, same as Node, solvable, saved ---
+  var DATE = 20261117;
+  await page.goto(url + '?mode=daily&date=' + DATE);
+  await page.waitForTimeout(300);
+  var dailyExpected = Gen.daily(DATE);
+  var dailyInfo = await hook(function () {
+    var h = window.__driftMaze;
+    return { mode: h.mode, date: h.dailyDate, rows: h.def.rows, par: h.par, title: document.getElementById('levelTitle').textContent };
+  });
+  assert(dailyInfo.mode === 'daily' && dailyInfo.date === DATE && /Daily 2026-11-17/.test(dailyInfo.title), 'URL ?mode=daily&date= opens that day\'s puzzle (' + dailyInfo.title + ')');
+  assert(JSON.stringify(dailyInfo.rows) === JSON.stringify(dailyExpected.rows) && dailyInfo.par === dailyExpected.par,
+    'browser daily level equals Node daily level (par ' + dailyInfo.par + ')');
+  await page.screenshot({ path: path.join(__dirname, '..', 'docs', 'cycle5-daily-screenshot.png') });
+  await play(dailyExpected.solution, 850);
+  await page.waitForTimeout(500);
+  var dailyDone = await hook(function () {
+    var h = window.__driftMaze;
+    return { solved: h.solved, stars: h.lastStars, rec: h.store.daily[h.dailyDate], banner: document.getElementById('banner').textContent };
+  });
+  assert(dailyDone.solved && dailyDone.stars === 3 && dailyDone.rec && dailyDone.rec.moves === dailyExpected.par && /Daily solved/.test(dailyDone.banner),
+    'daily solved at par: 3 stars, result saved (' + JSON.stringify(dailyDone.rec) + ')');
+  await page.goto(url + '?mode=daily&date=' + DATE);
+  await page.waitForTimeout(300);
+  var dailyHud = await hook(function () { return document.getElementById('bestInfo').textContent; });
+  assert(new RegExp('best ' + dailyExpected.par + ' moves').test(dailyHud), 'daily best shown after reload (' + dailyHud + ')');
+  await page.keyboard.press('KeyT');
+  await page.waitForTimeout(300);
+  var today = await hook(function () { return window.__driftMaze.dailyDate; });
+  assert(today === Gen.dateSeed(), 'T opens today\'s UTC date (' + today + ')');
+
+  // --- Test 14: corrupt or missing storage does not break the game ---
+  await hook(function () { window.localStorage.setItem('driftMaze.v1', '{not json'); });
+  await page.goto(url);
+  await page.waitForTimeout(300);
+  var afterCorrupt = await hook(function () { return { idx: window.__driftMaze.levelIndex, unlocked: window.__driftMaze.store.unlocked }; });
+  assert(afterCorrupt.idx === 0 && afterCorrupt.unlocked === 0, 'corrupt save is ignored and the game starts fresh');
+  var blocked = await browser.newContext();
+  await blocked.addInitScript(function () {
+    Object.defineProperty(window, 'localStorage', { get: function () { throw new Error('blocked'); } });
+  });
+  var page2 = await blocked.newPage();
+  var errors2 = [];
+  page2.on('pageerror', function (err) { errors2.push(String(err)); });
+  await page2.goto(url);
+  await page2.waitForTimeout(300);
+  await page2.keyboard.press('ArrowDown');
+  await page2.waitForTimeout(300);
+  var movedBlocked = await page2.evaluate(function () { return window.__driftMaze.moves; });
+  assert(errors2.length === 0 && movedBlocked === 1, 'game loads and plays with storage blocked (errors ' + JSON.stringify(errors2) + ')');
+  await blocked.close();
+
+  // --- Test 15: every curated campaign level is winnable in the real page ---
+  var wonAll = 0, starSum = 0;
+  for (var li = 0; li < LEVELS.length; li++) {
+    await page.evaluate(function (n) { window.__driftMaze.loadLevel(n); }, li);
+    await page.waitForTimeout(100);
+    var solN = DriftMaze.solveLevel(DriftMaze.parseLevel(LEVELS[li]));
+    await play(solN.moves, 800);
+    await page.waitForTimeout(300);
+    var resN = await hook(function () { return { solved: window.__driftMaze.solved, stars: window.__driftMaze.lastStars, moves: window.__driftMaze.moves }; });
+    if (resN.solved && resN.stars === 3 && resN.moves === LEVELS[li].par) wonAll++;
+    else console.log('  level ' + (li + 1) + ' result: ' + JSON.stringify(resN));
+    await page.waitForTimeout(1000);
+  }
+  var endState = await hook(function () {
+    return { cleared: window.__driftMaze.cleared, store: window.__driftMaze.store, banner: document.getElementById('banner').textContent };
+  });
+  Object.keys(endState.store.campaign).forEach(function (k) { starSum += endState.store.campaign[k].stars; });
+  assert(wonAll === LEVELS.length, 'all ' + LEVELS.length + ' campaign levels solved at par in the browser (' + wonAll + ')');
+  assert(endState.cleared && starSum === 36 && /Stars 36 \/ 36/.test(endState.banner), 'campaign completes with 36 / 36 stars (' + starSum + ')');
+  await page.screenshot({ path: path.join(__dirname, '..', 'docs', 'cycle5-campaign-end-screenshot.png') });
+
+  assert(consoleErrors.length === 0, 'no console/page errors across the Cycle 5 checks (errors: ' + JSON.stringify(consoleErrors) + ')');
 
   await browser.close();
 
